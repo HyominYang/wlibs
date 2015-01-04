@@ -283,16 +283,22 @@ int wsock_table_run(struct wsock_table *table)
 				if(lp_element->addr_info.flag_v6 == 0) {
 					recv_ret = recv(lp_element->sock, lp_element->buff + lp_element->offset, lp_element->buff_size, 0);
 					if(recv_ret == 0) { // Disconnected by a Client
+disconnection_client:
+						syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting...", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
 						if(lp_element->fn_disconnection != NULL) {
 							lp_element->fn_disconnection(table, lp_element);
 						}
 						close(lp_element->sock);
 						if(epoll_ctl(table->epoll_fd, EPOLL_CTL_DEL, lp_element->sock, &lp_element->ep_event)) {
-							syslog(LOG_INFO, LOG_HEAD "Element delete error : %s", LOG_HEAD_PARAM, strerror(errno));
+							syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting : Element delete error : %s", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, strerror(errno));
 							table->flag_exit = 1;
 							break;
 						}
 						continue;
+					}
+					else if(recv_ret < 0) { // Socket error
+						syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieve error : %s. Go to disconnect with peer.", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, strerror(errno));
+						goto disconnection_client;
 					}
 				}
 			}

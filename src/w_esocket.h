@@ -35,12 +35,15 @@ enum {
 	WSOCK_TCP_CLIENT,
 };
 
+#define WSOCK_ADDR_IP_STRLEN_MAX 40
 struct wsock_addr
 {
 	int flag_v6;
 	union {
 		struct sockaddr_in v4;
 	};
+	char ch_ip[WSOCK_ADDR_IP_STRLEN_MAX];
+	unsigned short int h_port; ///< port : host order
 };
 
 struct wsock

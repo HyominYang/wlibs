@@ -53,19 +53,19 @@ struct wsock
 	int type;
 	struct wsock_addr addr_info;
 	unsigned char *buff;
-	unsigned int offset;
-	unsigned int read_len;
-	unsigned int buff_size;
+	int offset;
+	int read_len;
+	int buff_size;
 	union wsock_data {
 		struct {
 			unsigned long int recv_bytes;
 			unsigned long int sent_bytes;
 			struct wsock *server;
-		} client_data;
+		} client;
 		struct {
 			int client_count_current;
 			int client_count_max;
-		} server_data;
+		} server;
 	} data;
 	time_t time_begin;
 	time_t time_end;
@@ -99,12 +99,12 @@ struct wsock_table
 };
 
 
-int wsock_create_tcp_table(struct wsock_table *table, int element_count, size_t buff_size);
+int wsock_create_tcp_table(struct wsock_table *table, int element_count, int buff_size, int timeout);
 int wsock_add_new_tcp_server(
-		struct wsock_table *table, struct w_socket_addr serv_info, int backlog, int client_count, void *expand_data,
+		struct wsock_table *table, struct wsock_addr serv_info, int backlog, int client_count, void *expand_data,
 		void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *),
-		void (*fn_receive) (struct wsock_table *, struct wsock *),
+		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *));
 void wsock_memset(struct wsock *wsock);
-void wsock_conn_release(struct wsock *wsock);
+int wsock_conn_release(struct wsock *wsock);
 #endif /* W_ESOCKET_H_ */

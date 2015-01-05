@@ -56,7 +56,7 @@ struct wsock
 	unsigned int offset;
 	unsigned int read_len;
 	unsigned int buff_size;
-	union {
+	union wsock_data {
 		struct {
 			unsigned long int recv_bytes;
 			unsigned long int sent_bytes;
@@ -66,13 +66,14 @@ struct wsock
 			int client_count_current;
 			int client_count_max;
 		} server_data;
-	};
+	} data;
 	time_t time_begin;
 	time_t time_end;
 
 	void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *);
-	void (*fn_receive) (struct wsock_table *, struct wsock *);
+	void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *);
 	void (*fn_disconnection) (struct wsock_table *, struct wsock *);
+	int flag_in_pool;
 	struct wsock_table *table;
 	struct wsock *prev;
 	struct wsock *next;
@@ -104,4 +105,6 @@ int wsock_add_new_tcp_server(
 		void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *),
 		void (*fn_receive) (struct wsock_table *, struct wsock *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *));
+void wsock_memset(struct wsock *wsock);
+void wsock_conn_release(struct wsock *wsock);
 #endif /* W_ESOCKET_H_ */

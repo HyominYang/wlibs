@@ -6,7 +6,7 @@
  */
 
 
-#include "w_esocket.h"
+#include "wesock.h"
 
 #ifndef LINK_NULL
 #define LINK_NULL -1
@@ -19,10 +19,22 @@
 #define LOG_HEAD "[wsock:%4d] "
 #define LOG_HEAD_PARAM __LINE__
 
-inline static wsock_lock(struct wsock *wsock) { pthread_spin_lock(&wsock->table->lock); }
-inline static wsock_unlock(struct wsock *wsock) { pthread_spin_unlock(&wsock->table->lock); }
-inline static wsock_table_lock(struct wsock_table *table) { pthread_spin_lock(&table->lock); }
-inline static wsock_table_unlock(struct wsock_table *table) { pthread_spin_unlock(&table->lock); }
+inline static void wsock_lock(struct wsock *wsock)
+{
+	pthread_spin_lock(&wsock->table->lock);
+}
+inline static void wsock_unlock(struct wsock *wsock)
+{
+	pthread_spin_unlock(&wsock->table->lock);
+}
+inline static void wsock_table_lock(struct wsock_table *table)
+{
+	pthread_spin_lock(&table->lock);
+}
+inline static void wsock_table_unlock(struct wsock_table *table)
+{
+	pthread_spin_unlock(&table->lock);
+}
 
 int wsock_create_tcp_table(struct wsock_table *table, int element_count, int  buff_size, int timeout)
 {
@@ -81,8 +93,258 @@ error:
 	return -1;
 }
 
+int wsock_conv_str_address(char *str_addr, int str_addr_len, unsigned short int port, struct wsock_addr *serv_info)
+{
+	int flag_v6, flag_num, i;
+
+	for(i=0, flag_v6=0, flag_num=0; i<str_addr_len; i++) {
+		if((str_addr[i] >= '0' && str_addr[i] <= '9') ||
+				(str_addr[i] >= 'a' && str_addr[i] <= 'f') ||
+				(str_addr[i] >= 'A' && str_addr[i] <= 'F')
+				) {
+			flag_num = 1;
+		}
+		else if(str_addr[i] == '.') {
+			if(flag_num == 0) {
+				return -1;
+			}
+			break;
+		} else {
+			if(str_addr[i] == ':') {
+				if(flag_num == 0) {
+					return -1;
+				}
+				flag_v6=1;
+				break;
+			}
+		}
+	}
+
+	if(i == str_addr_len) {
+		return -1;
+	}
+
+	if(flag_v6 == 1) {
+	} else {
+		serv_info->flag_v6 = 0;
+		inet_pton(AF_INET, str_addr, &serv_info->v4.sin_addr);
+		inet_ntop(AF_INET, &serv_info->v4.sin_addr, serv_info->ch_ip, WSOCK_ADDR_IP_STRLEN_MAX);
+		serv_info->h_port = port;
+		serv_info->v4.sin_port = htons(port);
+		serv_info->v4.sin_family = AF_INET;
+	}
+
+	return 0;
+}
+
+int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec) 
+{ 
+	/*Copy from : http://www.joinc.co.kr/modules/moniwiki/wiki.php/Site/Network_Programing/Documents/Sockettimeout*/
+	int newSockStat; 
+	int orgSockStat; 
+	int res, n; 
+	fd_set  rset, wset; 
+	struct timeval tval; 
+
+	int error = 0; 
+	int esize; 
+
+	if ( (newSockStat = fcntl(sockfd, F_GETFL, NULL)) < 0 )  
+	{ 
+		//perror("F_GETFL error"); 
+		return -1; 
+	} 
+
+	orgSockStat = newSockStat; 
+	newSockStat |= O_NONBLOCK; 
+
+	// Non blocking 상태로 만든다.  
+	if(fcntl(sockfd, F_SETFL, newSockStat) < 0) 
+	{ 
+		//perror("F_SETLF error"); 
+		return -1; 
+	} 
+
+	// 연결을 기다린다. 
+	// Non blocking 상태이므로 바로 리턴한다. 
+	if((res = connect(sockfd, saddr, addrsize)) < 0) 
+	{ 
+		if (errno != EINPROGRESS) 
+			return -1; 
+	} 
+
+	//printf("RES : %d\n", res); 
+	// 즉시 연결이 성공했을 경우 소켓을 원래 상태로 되돌리고 리턴한다.  
+	if (res == 0) 
+	{ 
+		//printf("Connect Success\n"); 
+		fcntl(sockfd, F_SETFL, orgSockStat); 
+		return 1; 
+	} 
+
+	FD_ZERO(&rset); 
+	FD_SET(sockfd, &rset); 
+	wset = rset; 
+
+	tval.tv_sec        = sec;     
+	tval.tv_usec    = 0; 
+
+	if ( (n = select(sockfd+1, &rset, &wset, NULL, NULL)) == 0) 
+	{ 
+		// timeout 
+		errno = ETIMEDOUT;     
+		return -1; 
+	} 
+
+	// 읽거나 쓴 데이터가 있는지 검사한다.  
+	if (FD_ISSET(sockfd, &rset) || FD_ISSET(sockfd, &wset) ) 
+	{ 
+		//printf("Read data\n"); 
+		esize = sizeof(int); 
+		if ((n = getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, (socklen_t *)&esize)) < 0) 
+			return -1; 
+	} 
+	else 
+	{ 
+		//perror("Socket Not Set"); 
+		return -1; 
+	} 
+
+
+	fcntl(sockfd, F_SETFL, orgSockStat); 
+	if(error) 
+	{ 
+		errno = error; 
+		//perror("Socket"); 
+		return -1; 
+	} 
+
+	return 1; 
+}
+
+struct wsock *wsock_add_new_tcp_client(
+		struct wsock_table *table, char *str_serv_addr, unsigned short int serv_port, unsigned short int clnt_port, int timeout, void *expand_data,
+		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
+		void (*fn_disconnection) (struct wsock_table *, struct wsock *))
+{
+	int sock, tmp;
+	struct epoll_event ep_event;
+	struct wsock *lp_wsock;
+	unsigned char *buff;
+	unsigned int buff_size;
+	char *str_local_ip_v4="127.0.0.1";
+	struct wsock_addr serv_info;
+	struct wsock_addr clnt_info;
+
+	if(table == NULL) {
+		syslog(LOG_INFO, LOG_HEAD "table is not init.", LOG_HEAD_PARAM);
+		return NULL;
+	}
+
+	memset(&serv_info, 0, sizeof(serv_info));
+	memset(&clnt_info, 0, sizeof(clnt_info));
+	if(wsock_conv_str_address(str_serv_addr, strlen(str_serv_addr), serv_port, &serv_info) < 0) {
+		syslog(LOG_INFO, LOG_HEAD "address(%s) is wrong.", LOG_HEAD_PARAM, str_serv_addr);
+		return NULL;
+	}
+
+	wsock_table_lock(table);
+	if(table->element_count_max - table->element_count_current <= 0) {
+		wsock_table_unlock(table);
+		syslog(LOG_INFO, LOG_HEAD "Empty-slot has none.", LOG_HEAD_PARAM);
+		return NULL;
+	}
+
+	if(serv_info.flag_v6 == 1) {
+		wsock_table_unlock(table);
+		syslog(LOG_INFO, LOG_HEAD "IPv6 Service don't support yet.", LOG_HEAD_PARAM);
+		return NULL;
+	} else {
+		clnt_info.flag_v6 = 0;
+		wsock_conv_str_address(str_local_ip_v4, strlen(str_local_ip_v4), clnt_port, &clnt_info);
+		if((sock = socket(clnt_info.v4.sin_family, SOCK_STREAM, 0)) < 0) {
+			wsock_table_unlock(table);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			return NULL;
+		}
+
+		tmp = 1;
+		if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp)) < 0) {
+			wsock_table_unlock(table);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			close(sock);
+			return NULL;
+		}
+
+		if(clnt_port > 0) {
+			if(bind(sock, (struct sockaddr *) &clnt_info.v4, sizeof(clnt_info.v4)) < 0) {
+				wsock_table_unlock(table);
+				syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+				close(sock);
+				return NULL;
+			}
+		}
+
+		if(wsock_connect_wait(sock, (struct sockaddr *) &clnt_info.v4, sizeof(clnt_info.v4), timeout) < 0) {
+			wsock_table_unlock(table);
+			close(sock);
+			syslog(LOG_INFO, LOG_HEAD "Connect to Server(%s:%d) is failed.(timeout : %d seconds)", LOG_HEAD_PARAM, serv_info.ch_ip, serv_info.h_port, timeout);
+			return NULL;
+		}
+
+		fcntl(sock, F_SETFL, O_NONBLOCK); /* Change the socket into non-blocking state	*/
+
+		if((table->element_count_max - table->element_count_current) == 0) {
+			wsock_table_unlock(table);
+			syslog(LOG_INFO, LOG_HEAD "pool is empty.", LOG_HEAD_PARAM);
+			close(sock);
+			return NULL;
+		}
+		lp_wsock = table->wsock_pool.next;
+
+		memset(&ep_event, 0, sizeof(ep_event));
+		ep_event.events = EPOLLIN|EPOLLET;
+		ep_event.data.ptr = (void *) lp_wsock;
+
+		table->wsock_pool.next = lp_wsock->next;
+		buff = lp_wsock->buff;
+		buff_size = lp_wsock->buff_size;
+
+		wsock_memset(lp_wsock);
+		lp_wsock->sock = sock;
+		lp_wsock->ep_event = ep_event;
+		lp_wsock->type = WSOCK_TCP_CLIENT_SINGLE;
+		lp_wsock->buff = buff;
+		lp_wsock->buff_size = buff_size;
+		lp_wsock->addr_info = clnt_info;
+		lp_wsock->fn_connection = NULL;
+		lp_wsock->fn_disconnection = fn_disconnection;
+		lp_wsock->fn_receive = fn_receive;
+		lp_wsock->next = table->wsock_head.next;
+
+		if(epoll_ctl(table->epoll_fd, EPOLL_CTL_ADD, sock, &ep_event)) {
+			lp_wsock->flag_in_pool = 1;
+			lp_wsock->next = table->wsock_pool.next;
+			table->wsock_pool.next = lp_wsock;
+			wsock_table_unlock(table);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			close(sock);
+			return NULL;
+		}
+		if(table->wsock_head.next != NULL) {
+			table->wsock_head.next->prev = lp_wsock;
+		}
+		table->wsock_head.next = lp_wsock;
+		table->element_count_current++;
+
+		wsock_table_unlock(table);
+	}
+
+	return lp_wsock;
+}
+
 int wsock_add_new_tcp_server(
-		struct wsock_table *table, struct wsock_addr serv_info, int backlog, int client_count, void *expand_data,
+		struct wsock_table *table, char *str_addr, unsigned short int port, int backlog, int client_count, void *expand_data,
 		void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *),
 		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *))
@@ -92,13 +354,27 @@ int wsock_add_new_tcp_server(
 	struct wsock *lp_wsock;
 	unsigned char *buff;
 	unsigned int buff_size;
+	struct wsock_addr serv_info;
 
 	if(table == NULL) {
 		syslog(LOG_INFO, LOG_HEAD "table is not init.", LOG_HEAD_PARAM);
 		return -1;
 	}
 
+
+	memset(&serv_info, 0, sizeof(serv_info));
+	if(wsock_conv_str_address(str_addr, strlen(str_addr), port, &serv_info) < 0) {
+		syslog(LOG_INFO, LOG_HEAD "address(%s) is wrong.", LOG_HEAD_PARAM, str_addr);
+		return -1;
+	}
+
 	wsock_table_lock(table);
+	if((table->element_count_max - table->element_count_current) < client_count+1) {
+		syslog(LOG_INFO, LOG_HEAD "table slot count is less than requirement slots.(Left count : %d, Requirement count : %d +1 is Server itself)", LOG_HEAD_PARAM, table->element_count_max - table->element_count_current, client_count+1);
+		wsock_table_unlock(table);
+		return -1;
+	}
+
 	if(table->flag_running == 1) {
 		wsock_table_unlock(table);
 		syslog(LOG_INFO, LOG_HEAD "table is not init.", LOG_HEAD_PARAM);
@@ -110,6 +386,7 @@ int wsock_add_new_tcp_server(
 		syslog(LOG_INFO, LOG_HEAD "IPv6 Service don't support yet.", LOG_HEAD_PARAM);
 		return -1;
 	} else {
+		//inet_ntop(AF_INET, &serv_info.v4.sin_addr, serv_info.ch_ip, sin_addr, 
 		if((sock = socket(serv_info.v4.sin_family, SOCK_STREAM, 0)) < 0) {
 			wsock_table_unlock(table);
 			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
@@ -124,7 +401,7 @@ int wsock_add_new_tcp_server(
 			return -1;
 		}
 
-		if(bind(sock, (struct sockaddr *) &serv_info, sizeof(serv_info)) < 0) {
+		if(bind(sock, (struct sockaddr *) &serv_info.v4, sizeof(serv_info.v4)) < 0) {
 			wsock_table_unlock(table);
 			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
 			close(sock);
@@ -288,7 +565,7 @@ int wsock_table_run(struct wsock_table *table)
 					}
 				} // IPv4 Processing
 			}
-			else if(lp_element->type == WSOCK_TCP_CLIENT) {
+			else { // Client
 				if(lp_element->addr_info.flag_v6 == 0) {
 					// Receive Data from element(Client)
 					wsock_table_lock(table);
@@ -396,6 +673,12 @@ int wsock_conn_release(struct wsock *wsock)
 
 		wsock->next = table->wsock_pool.next;
 		table->wsock_pool.next = wsock;
+
+		// Count update
+		table->element_count_current--; 
+		if(wsock->type == WSOCK_TCP_CLIENT) {
+			wsock->data.client.server->data.server.client_count_current--;
+		}
 	}
 
 	return 0;
@@ -442,8 +725,3 @@ int wsock_send(struct wsock *wsock, unsigned char *buff, int len)
 	return len;
 }
 
-
-int main(int argc, char **argv)
-{
-	return 0;
-}

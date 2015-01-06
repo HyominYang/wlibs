@@ -33,6 +33,7 @@ enum {
 	WSOCK_NONE=0,
 	WSOCK_TCP_SERVER,
 	WSOCK_TCP_CLIENT,
+	WSOCK_TCP_CLIENT_SINGLE
 };
 
 #define WSOCK_ADDR_IP_STRLEN_MAX 40
@@ -98,13 +99,36 @@ struct wsock_table
 	unsigned char *buff_mem;
 };
 
+// Start Table
+int wsock_table_run(struct wsock_table *table);
 
+// Create Table
 int wsock_create_tcp_table(struct wsock_table *table, int element_count, int buff_size, int timeout);
+
+// Add New TCP Client
+struct wsock *wsock_add_new_tcp_client(
+		struct wsock_table *table, char *str_serv_addr, unsigned short int serv_port, unsigned short int clnt_port, int timeout, void *expand_data,
+		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
+		void (*fn_disconnection) (struct wsock_table *, struct wsock *));
+
+// Add New TCP Server
 int wsock_add_new_tcp_server(
-		struct wsock_table *table, struct wsock_addr serv_info, int backlog, int client_count, void *expand_data,
+		struct wsock_table *table, char *str_addr, unsigned short int port, int backlog, int client_count, void *expand_data,
 		void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *),
 		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *));
+// Clear wsock
 void wsock_memset(struct wsock *wsock);
+
+// Connection Release
 int wsock_conn_release(struct wsock *wsock);
+
+// Convert a String address to a Data address
+int wsock_conv_str_address(char *str_addr, int str_addr_len, unsigned short int port, struct wsock_addr *serv_info);
+
+// Client Connector
+int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec);
+
+// Send Data
+int wsock_send(struct wsock *wsock, unsigned char *buff, int len);
 #endif /* W_ESOCKET_H_ */

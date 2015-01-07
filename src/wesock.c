@@ -19,6 +19,12 @@
 #define LOG_HEAD "[wsock:%4d] "
 #define LOG_HEAD_PARAM __LINE__
 
+#if 0
+#define WDEBUG__ syslog(LOG_INFO, "%s:%d", __func__, __LINE__);
+#else 
+#define WDEBUG__
+#endif
+
 inline static void wsock_lock(struct wsock *wsock)
 {
 	pthread_spin_lock(&wsock->table->lock);
@@ -39,15 +45,17 @@ inline static void wsock_table_unlock(struct wsock_table *table)
 int wsock_create_tcp_table(struct wsock_table *table, int element_count, int  buff_size, int timeout)
 {
 	int i;
+	char str_error[256];
 
 	memset(table, 0, sizeof(struct wsock_table));
 	if(pthread_spin_init(&table->lock, 0)) {
-		syslog(LOG_NOTICE, LOG_HEAD "pthread_spin_init() is failed.", LOG_HEAD_PARAM);
+		syslog(LOG_INFO, LOG_HEAD "pthread_spin_init() is failed.", LOG_HEAD_PARAM);
 		return -1;
 	}
 
 	if((table->epoll_fd = epoll_create(element_count)) < 0) {
-		syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+		strerror_r(errno, str_error, 256);
+		syslog(LOG_INFO, LOG_HEAD "Error : %s", LOG_HEAD_PARAM, str_error);
 		goto error;
 	}
 
@@ -55,7 +63,7 @@ int wsock_create_tcp_table(struct wsock_table *table, int element_count, int  bu
 	table->wsock_mem = (struct wsock *) malloc(sizeof(struct wsock) * element_count);
 	table->buff_mem = (unsigned char *) malloc(buff_size * element_count);
 	if(table->ep_event == NULL || table->wsock_mem == NULL || table->buff_mem == NULL) {
-		syslog(LOG_NOTICE, LOG_HEAD "malloc() is failed.", LOG_HEAD_PARAM);
+		syslog(LOG_INFO, LOG_HEAD "malloc() is failed.", LOG_HEAD_PARAM);
 		goto error;
 	}
 
@@ -125,10 +133,11 @@ int wsock_conv_str_address(char *str_addr, int str_addr_len, unsigned short int 
 	}
 
 	if(flag_v6 == 1) {
+		serv_info->flag_v6 = 1;
 	} else {
 		serv_info->flag_v6 = 0;
-		inet_pton(AF_INET, str_addr, &serv_info->v4.sin_addr);
-		inet_ntop(AF_INET, &serv_info->v4.sin_addr, serv_info->ch_ip, WSOCK_ADDR_IP_STRLEN_MAX);
+		inet_pton(AF_INET, str_addr, &serv_info->v4.sin_addr.s_addr);
+		inet_ntop(AF_INET, &serv_info->v4.sin_addr.s_addr, serv_info->ch_ip, WSOCK_ADDR_IP_STRLEN_MAX);
 		serv_info->h_port = port;
 		serv_info->v4.sin_port = htons(port);
 		serv_info->v4.sin_family = AF_INET;
@@ -145,6 +154,7 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	int res, n; 
 	fd_set  rset, wset; 
 	struct timeval tval; 
+	char str_error[256];
 
 	int error = 0; 
 	int esize; 
@@ -152,6 +162,8 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	if ( (newSockStat = fcntl(sockfd, F_GETFL, NULL)) < 0 )  
 	{ 
 		//perror("F_GETFL error"); 
+		strerror_r(errno, str_error, 256);
+		syslog(LOG_INFO, LOG_HEAD "Error : %s.", LOG_HEAD_PARAM, str_error);
 		return -1; 
 	} 
 
@@ -162,6 +174,8 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	if(fcntl(sockfd, F_SETFL, newSockStat) < 0) 
 	{ 
 		//perror("F_SETLF error"); 
+		strerror_r(errno, str_error, 256);
+		syslog(LOG_INFO, LOG_HEAD "Error : F_SETLF - %s.", LOG_HEAD_PARAM, str_error);
 		return -1; 
 	} 
 
@@ -169,8 +183,10 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	// Non blocking 상태이므로 바로 리턴한다. 
 	if((res = connect(sockfd, saddr, addrsize)) < 0) 
 	{ 
-		if (errno != EINPROGRESS) 
+		if (errno != EINPROGRESS) {
+			syslog(LOG_INFO, LOG_HEAD "Error : connect() - EINPROGRESS", LOG_HEAD_PARAM);
 			return -1; 
+		}
 	} 
 
 	//printf("RES : %d\n", res); 
@@ -178,6 +194,7 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	if (res == 0) 
 	{ 
 		//printf("Connect Success\n"); 
+		syslog(LOG_INFO, LOG_HEAD "Connection is completed.", LOG_HEAD_PARAM);
 		fcntl(sockfd, F_SETFL, orgSockStat); 
 		return 1; 
 	} 
@@ -189,10 +206,11 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	tval.tv_sec        = sec;     
 	tval.tv_usec    = 0; 
 
-	if ( (n = select(sockfd+1, &rset, &wset, NULL, NULL)) == 0) 
+	if ( (n = select(sockfd+1, &rset, &wset, NULL, &tval)) == 0) 
 	{ 
 		// timeout 
 		errno = ETIMEDOUT;     
+		syslog(LOG_INFO, LOG_HEAD "Try to connect is timeout.", LOG_HEAD_PARAM);
 		return -1; 
 	} 
 
@@ -201,12 +219,16 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	{ 
 		//printf("Read data\n"); 
 		esize = sizeof(int); 
-		if ((n = getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, (socklen_t *)&esize)) < 0) 
+		if ((n = getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, (socklen_t *)&esize)) < 0)  {
+			syslog(LOG_INFO, LOG_HEAD "Error : getsockopt()", LOG_HEAD_PARAM);
 			return -1; 
+		}
 	} 
 	else 
 	{ 
 		//perror("Socket Not Set"); 
+		strerror_r(errno, str_error, 256);
+		syslog(LOG_INFO, LOG_HEAD "Error : Socket Not Set(%s)", LOG_HEAD_PARAM, str_error);
 		return -1; 
 	} 
 
@@ -215,7 +237,8 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	if(error) 
 	{ 
 		errno = error; 
-		//perror("Socket"); 
+		strerror_r(errno, str_error, 256);
+		syslog(LOG_INFO, LOG_HEAD "Error : %s", LOG_HEAD_PARAM, str_error);
 		return -1; 
 	} 
 
@@ -235,6 +258,7 @@ struct wsock *wsock_add_new_tcp_client(
 	char *str_local_ip_v4="127.0.0.1";
 	struct wsock_addr serv_info;
 	struct wsock_addr clnt_info;
+	char str_error[256];
 
 	if(table == NULL) {
 		syslog(LOG_INFO, LOG_HEAD "table is not init.", LOG_HEAD_PARAM);
@@ -262,16 +286,18 @@ struct wsock *wsock_add_new_tcp_client(
 	} else {
 		clnt_info.flag_v6 = 0;
 		wsock_conv_str_address(str_local_ip_v4, strlen(str_local_ip_v4), clnt_port, &clnt_info);
-		if((sock = socket(clnt_info.v4.sin_family, SOCK_STREAM, 0)) < 0) {
+		if((sock = socket(serv_info.v4.sin_family, SOCK_STREAM, 0)) < 0) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			return NULL;
 		}
 
 		tmp = 1;
 		if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp)) < 0) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return NULL;
 		}
@@ -279,18 +305,30 @@ struct wsock *wsock_add_new_tcp_client(
 		if(clnt_port > 0) {
 			if(bind(sock, (struct sockaddr *) &clnt_info.v4, sizeof(clnt_info.v4)) < 0) {
 				wsock_table_unlock(table);
-				syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+				strerror_r(errno, str_error, 256);
+				syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 				close(sock);
 				return NULL;
 			}
 		}
 
-		if(wsock_connect_wait(sock, (struct sockaddr *) &clnt_info.v4, sizeof(clnt_info.v4), timeout) < 0) {
+#if 0
+		syslog(LOG_INFO, LOG_HEAD "sizeof(serv_info.v4) -> %ld, %ld", LOG_HEAD_PARAM, sizeof(serv_info.v4), sizeof(struct sockaddr_in));
+		if(connect(sock, (struct sockaddr *) &serv_info.v4, sizeof(serv_info.v4)) < 0) {;
+			strerror_r(errno, str_error, 256);
+			wsock_table_unlock(table);
+			close(sock);
+			syslog(LOG_INFO, LOG_HEAD "Connect to Server(%s:%d) is failed(%s).", LOG_HEAD_PARAM, serv_info.ch_ip, serv_info.h_port, str_error);
+			return NULL;
+		}
+#else
+		if(wsock_connect_wait(sock, (struct sockaddr *) &serv_info.v4, sizeof(serv_info.v4), timeout) < 0) {
 			wsock_table_unlock(table);
 			close(sock);
 			syslog(LOG_INFO, LOG_HEAD "Connect to Server(%s:%d) is failed.(timeout : %d seconds)", LOG_HEAD_PARAM, serv_info.ch_ip, serv_info.h_port, timeout);
 			return NULL;
 		}
+#endif
 
 		fcntl(sock, F_SETFL, O_NONBLOCK); /* Change the socket into non-blocking state	*/
 
@@ -327,7 +365,8 @@ struct wsock *wsock_add_new_tcp_client(
 			lp_wsock->next = table->wsock_pool.next;
 			table->wsock_pool.next = lp_wsock;
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return NULL;
 		}
@@ -355,6 +394,7 @@ int wsock_add_new_tcp_server(
 	unsigned char *buff;
 	unsigned int buff_size;
 	struct wsock_addr serv_info;
+	char str_error[256];
 
 	if(table == NULL) {
 		syslog(LOG_INFO, LOG_HEAD "table is not init.", LOG_HEAD_PARAM);
@@ -386,31 +426,34 @@ int wsock_add_new_tcp_server(
 		syslog(LOG_INFO, LOG_HEAD "IPv6 Service don't support yet.", LOG_HEAD_PARAM);
 		return -1;
 	} else {
-		//inet_ntop(AF_INET, &serv_info.v4.sin_addr, serv_info.ch_ip, sin_addr, 
 		if((sock = socket(serv_info.v4.sin_family, SOCK_STREAM, 0)) < 0) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			return -1;
 		}
 
 		tmp = 1;
 		if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp)) < 0) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
 
 		if(bind(sock, (struct sockaddr *) &serv_info.v4, sizeof(serv_info.v4)) < 0) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
 
 		if(listen(sock, backlog) < 0) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
@@ -451,7 +494,8 @@ int wsock_add_new_tcp_server(
 			lp_wsock->next = table->wsock_pool.next;
 			table->wsock_pool.next = lp_wsock;
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
@@ -478,6 +522,7 @@ int wsock_table_run(struct wsock_table *table)
 	struct wsock_addr sock_info;
 	struct epoll_event ep_event;
 	struct wsock *lp_wsock;
+	char str_error[256];
 
 	wsock_table_lock(table);
 	table->flag_running = 1;
@@ -498,7 +543,8 @@ int wsock_table_run(struct wsock_table *table)
 		}
 
 		if(event_count < 0) {
-			syslog(LOG_NOTICE, LOG_HEAD "epoll_pwait() error : %s", LOG_HEAD_PARAM, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "epoll_pwait() error : %s", LOG_HEAD_PARAM, str_error);
 			continue;
 		}
 
@@ -509,7 +555,8 @@ int wsock_table_run(struct wsock_table *table)
 				if(lp_element->addr_info.flag_v6 == 0) {
 					sock_len = sizeof(sock_info.v4);
 					if((sock = accept(lp_element->sock, (struct sockaddr *) &sock_info.v4, (socklen_t *)&sock_len)) < 0) {
-						syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, strerror(errno));
+						strerror_r(errno, str_error, 256);
+						syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 						continue;
 					}
 					if(lp_element->data.server.client_count_current ==
@@ -520,6 +567,8 @@ int wsock_table_run(struct wsock_table *table)
 					}
 
 					sock_info.flag_v6 = 0;
+					sock_info.h_port = ntohs(sock_info.v4.sin_port);
+					inet_ntop(AF_INET, &sock_info.v4.sin_addr.s_addr, sock_info.ch_ip, WSOCK_ADDR_IP_STRLEN_MAX);
 					memset(&ep_event, 0, sizeof(ep_event));
 					ep_event.events = EPOLLIN|EPOLLET;
 					fcntl(sock, F_SETFL, O_NONBLOCK); // Sock Opt change : Non-Blocking mode
@@ -529,7 +578,8 @@ int wsock_table_run(struct wsock_table *table)
 					ep_event.data.ptr = (void *) lp_wsock;
 					if(epoll_ctl(table->epoll_fd, EPOLL_CTL_ADD, sock, &ep_event)) {
 						wsock_table_unlock(table);
-						syslog(LOG_INFO, LOG_HEAD "Add a client is failed(%s).", LOG_HEAD_PARAM, strerror(errno));
+						strerror_r(errno, str_error, 256);
+						syslog(LOG_INFO, LOG_HEAD "Add a client is failed(%s).", LOG_HEAD_PARAM, str_error);
 						close(sock);
 						table->flag_exit = 1;
 						break;
@@ -566,6 +616,7 @@ int wsock_table_run(struct wsock_table *table)
 				} // IPv4 Processing
 			}
 			else { // Client
+receive_from_client:
 				if(lp_element->addr_info.flag_v6 == 0) {
 					// Receive Data from element(Client)
 					wsock_table_lock(table);
@@ -575,6 +626,8 @@ int wsock_table_run(struct wsock_table *table)
 					}
 					recv_ret = recv(lp_element->sock, lp_element->buff + lp_element->offset, lp_element->buff_size, 0);
 					wsock_table_unlock(table);
+					strerror_r(errno, str_error, 256);
+					syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieved(%d) : %s", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, recv_ret, str_error);
 
 					// Parse event types
 					if(recv_ret == 0) { // Disconnected by a Client
@@ -592,18 +645,25 @@ disconnection_client:
 						}
 
 						if(wsock_conn_release(lp_element) < 0) {
+							wsock_table_unlock(table);
 							break;
 						}
 						wsock_table_unlock(table);
 						continue;
 					}
 					else if(recv_ret < 0) { // Socket error
-						syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieve error : %s. Go to disconnect with peer.", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, strerror(errno));
+						strerror_r(errno, str_error, 256);
+						syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieve error : %s. Go to disconnect with peer.", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, str_error);
 						goto disconnection_client;
 					} else { // Received data
 						lp_element->read_len = recv_ret;
 						if(lp_element->fn_receive != NULL) {
 							lp_element->fn_receive(table, lp_element, lp_element->buff, lp_element->read_len, &lp_element->offset);
+						}
+						lp_element->data.client.recv_bytes += recv_ret;
+						if(recv_ret == lp_element->buff_size) {
+							syslog(LOG_INFO, LOG_HEAD "[%s:%d] Receive Continue", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
+							goto receive_from_client;
 						}
 					}
 				}
@@ -651,12 +711,14 @@ int wsock_conn_release(struct wsock *wsock)
 {
 	if(wsock->flag_in_pool == 0) {
 		struct wsock_table *table;
+		char str_error[256];
 
 		wsock->flag_in_pool = 1;
 		table = wsock->table;
 		if(epoll_ctl(table->epoll_fd, EPOLL_CTL_DEL, wsock->sock, &wsock->ep_event)) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting : Element delete error : %s", LOG_HEAD_PARAM, wsock->addr_info.ch_ip, wsock->addr_info.h_port, strerror(errno));
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting : Element delete error : %s", LOG_HEAD_PARAM, wsock->addr_info.ch_ip, wsock->addr_info.h_port, str_error);
 			table->flag_exit = 1;
 			return -1;
 		}
@@ -676,9 +738,15 @@ int wsock_conn_release(struct wsock *wsock)
 
 		// Count update
 		table->element_count_current--; 
-		if(wsock->type == WSOCK_TCP_CLIENT) {
-			wsock->data.client.server->data.server.client_count_current--;
+		switch(wsock->type) {
+			case WSOCK_TCP_CLIENT:
+				wsock->data.client.server->data.server.client_count_current--;
+			case WSOCK_TCP_CLIENT_SINGLE:
+				syslog(LOG_INFO, LOG_HEAD "[%s:%d] Send(%lu) Receive(%lu)", LOG_HEAD_PARAM, wsock->addr_info.ch_ip, wsock->addr_info.h_port, wsock->data.client.sent_bytes, wsock->data.client.recv_bytes);
+				break;
 		}
+	} else {
+		syslog(LOG_INFO, LOG_HEAD "Connection Release is failed. Disconnected already...", LOG_HEAD_PARAM);
 	}
 
 	return 0;
@@ -706,9 +774,14 @@ int wsock_send(struct wsock *wsock, unsigned char *buff, int len)
 		wrote_len = send(wsock->sock, buff, left_len, MSG_DONTWAIT);
 		wsock_table_unlock(wsock->table);
 		if(wrote_len == left_len) {
+			wsock->data.client.sent_bytes += wrote_len;
 			break;
 		}
 		else if(wrote_len < 0) {
+			if(errno == EAGAIN) {
+				usleep(1000);
+				continue;
+			}
 			strerror_r(errno, err_buff, 512);
 			syslog(LOG_INFO, LOG_HEAD "Send data is error : %s", LOG_HEAD_PARAM, err_buff);
 			wsock_table_lock(wsock->table);
@@ -716,6 +789,7 @@ int wsock_send(struct wsock *wsock, unsigned char *buff, int len)
 			wsock_table_unlock(wsock->table);
 			return wrote_len;
 		} else {
+			wsock->data.client.sent_bytes += wrote_len;
 			offset += wrote_len;
 			left_len -= wrote_len;
 			usleep(1);

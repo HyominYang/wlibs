@@ -93,6 +93,7 @@ struct wsock_table
 	int element_count_current;
 	int element_count_max;
 	struct epoll_event *ep_event;
+	struct epoll_event **ep_event_continue;
 	struct wsock *wsock_mem;
 	struct wsock wsock_pool;
 	struct wsock wsock_head;

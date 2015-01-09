@@ -145,5 +145,5 @@ int wsock_conv_str_address(char *str_addr, int str_addr_len, unsigned short int 
 int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec);
 
 // Send Data
-int wsock_send(struct wsock *wsock, unsigned char *buff, int len);
+int wsock_send(struct wsock *wsock, const void *buff, int len);
 #endif /* W_ESOCKET_H_ */

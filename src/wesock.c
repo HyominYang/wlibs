@@ -452,11 +452,13 @@ int wsock_add_new_tcp_server(
 		return -1;
 	}
 
+	/*
 	if(table->flag_running == 1) {
 		wsock_table_unlock(table);
 		syslog(LOG_INFO, LOG_HEAD "Error : add TCP Server is failed. table is running.", LOG_HEAD_PARAM);
 		return -1;
 	}
+	*/
 
 	if(serv_info.flag_v6 == 1) {
 		wsock_table_unlock(table);
@@ -632,6 +634,7 @@ int wsock_table_run(struct wsock_table *table)
 					lp_wsock->sock = sock;
 					lp_wsock->addr_info = sock_info;
 					lp_wsock->ep_event = ep_event;
+					lp_wsock->expand_data = lp_element->expand_data;
 					lp_wsock->data.client.server = lp_element;
 					lp_wsock->fn_connection = lp_element->fn_connection;
 					lp_wsock->fn_receive = lp_element->fn_receive;
@@ -658,12 +661,16 @@ receive_from_client:
 					recv_ret = recv(lp_element->sock, lp_element->buff + lp_element->offset, lp_element->buff_size, 0);
 					wsock_table_unlock(table);
 					strerror_r(errno, str_error, 256);
+#ifdef WESOCK_DEBUG
 					syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieved(%d) : %s", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, recv_ret, str_error);
+#endif
 
 					// Parse event types
 					if(recv_ret == 0) { // Disconnected by a Client
 disconnection_client:
+#ifdef WESOCK_DEBUG
 						syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting...", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
+#endif
 						wsock_table_lock(table);
 						if(wsock_conn_release(lp_element) < 0) {
 							wsock_table_unlock(table);
@@ -673,9 +680,15 @@ disconnection_client:
 						continue;
 					}
 					else if(recv_ret < 0) { // Socket error
-						strerror_r(errno, str_error, 256);
-						syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieve error : %s. Go to disconnect with peer.", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, str_error);
-						goto disconnection_client;
+						switch(errno) {
+							case EAGAIN:
+								break;
+							deefault: 
+								strerror_r(errno, str_error, 256);
+								syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieve error : %s(%d). Go to disconnect with peer.", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, str_error, errno);
+								goto disconnection_client;
+								break;
+						}
 					} else { // Received data
 						lp_element->read_len = recv_ret;
 						lp_element->data.client.recv_bytes += recv_ret;
@@ -684,7 +697,9 @@ disconnection_client:
 							lp_element->fn_receive(table, lp_element, lp_element->buff, lp_element->read_len, &lp_element->offset);
 						}
 						if(recv_ret == lp_element->buff_size) {
+#ifdef WESOCK_DEBUG
 							syslog(LOG_INFO, LOG_HEAD "[%s:%d] Receive Continue", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
+#endif
 							goto receive_from_client;
 						}
 					}
@@ -772,19 +787,24 @@ int wsock_conn_release(struct wsock *wsock)
 				break;
 		}
 	} else {
+#ifdef WESOCK_DEBUG
 		syslog(LOG_INFO, LOG_HEAD "Connection Release is failed. Disconnected already...", LOG_HEAD_PARAM);
+#endif
+		return 0;
 	}
 
 	return 0;
 }
 
-int wsock_send(struct wsock *wsock, unsigned char *buff, int len)
+int wsock_send(struct wsock *wsock, const void *buff, int len)
 {
 	int wrote_len, offset, left_len;
 	static char err_buff[512];
 
 	if(len <= 0) {
+#ifdef WESOCK_DEBUG
 		syslog(LOG_INFO, LOG_HEAD "Sending data size is zero.", LOG_HEAD_PARAM);
+#endif
 		return -1;
 	}
 
@@ -793,7 +813,9 @@ int wsock_send(struct wsock *wsock, unsigned char *buff, int len)
 	do {
 		wsock_table_lock(wsock->table);
 		if(wsock->flag_in_pool == 1) {
+#ifdef WESOCK_DEBUG
 			syslog(LOG_INFO, LOG_HEAD "Sending data is stopped. connection is released.", LOG_HEAD_PARAM);
+#endif
 			wsock_table_unlock(wsock->table);
 			break;
 		}

@@ -1,6 +1,6 @@
 #include "wesock.h"
 
-void f_recv (struct wsock_table *table, struct wsock *clnt, char *buff, int read_len, int *offset)
+void f_recv (struct wsock_table *table, struct wsock *clnt, unsigned char *buff, int read_len, int *offset)
 {
 	printf("%s:%d receive data(%d bytes).\n", clnt->addr_info.ch_ip, clnt->addr_info.h_port, read_len);
 }

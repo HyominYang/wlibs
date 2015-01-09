@@ -42,9 +42,17 @@ inline static void wsock_table_unlock(struct wsock_table *table)
 	pthread_spin_unlock(&table->lock);
 }
 
+void wsock_release_tcp_table(struct wsock_table *table, int element_count, int  buff_size, int timeout)
+{
+	table->flag_exit = 1;
+	while(table->flag_running == 1) {
+		usleep(10000);
+	}
+}
+
 int wsock_create_tcp_table(struct wsock_table *table, int element_count, int  buff_size, int timeout)
 {
-	int i;
+	int i, q_size;
 	char str_error[256];
 
 	memset(table, 0, sizeof(struct wsock_table));
@@ -59,10 +67,13 @@ int wsock_create_tcp_table(struct wsock_table *table, int element_count, int  bu
 		goto error;
 	}
 
+	q_size = element_count+1;
+
 	table->ep_event = (struct epoll_event *) malloc(sizeof(struct epoll_event) * element_count);
 	table->wsock_mem = (struct wsock *) malloc(sizeof(struct wsock) * element_count);
 	table->buff_mem = (unsigned char *) malloc(buff_size * element_count);
-	if(table->ep_event == NULL || table->wsock_mem == NULL || table->buff_mem == NULL) {
+	table->wsock_release_q = (struct wsock **) malloc(sizeof(struct wsock *) * q_size);
+	if(table->ep_event == NULL || table->wsock_mem == NULL || table->buff_mem == NULL || table->wsock_release_q == NULL) {
 		syslog(LOG_INFO, LOG_HEAD "malloc() is failed.", LOG_HEAD_PARAM);
 		goto error;
 	}
@@ -70,10 +81,13 @@ int wsock_create_tcp_table(struct wsock_table *table, int element_count, int  bu
 	memset(table->ep_event, 0, sizeof(struct epoll_event) * element_count);
 	memset(table->wsock_mem, 0, sizeof(struct wsock) * element_count);
 	memset(table->buff_mem, 0, buff_size * element_count);
+	memset(table->wsock_release_q, 0, sizeof(struct wsock **) * q_size);
 
 
+	table->q_size = q_size; 
 	table->element_count_max = element_count;
 	table->timeout = timeout;
+	table->pool_count = element_count;
 
 	for(i=0; i<element_count; i++) {
 		table->wsock_mem[i].next = table->wsock_pool.next;
@@ -245,16 +259,51 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	return 1; 
 }
 
+static void wsock_add_element(struct wsock *wsock)
+{
+	struct wsock_table *table = wsock->table;
+
+	wsock->next = table->wsock_head.next;
+
+	if(table->wsock_head.next != NULL) {
+		table->wsock_head.next->prev = wsock;
+	}
+	table->wsock_head.next = wsock;
+}
+
+static struct wsock *wsock_get_element(struct wsock_table *table)
+{
+	struct wsock *wsock;
+	
+	if(table->wsock_pool.next == NULL) {
+		return NULL;
+	}
+
+	table->pool_count--;
+	wsock = table->wsock_pool.next;
+	table->wsock_pool.next = wsock->next;
+
+	return wsock;
+}
+
+static void wsock_release_element(struct wsock *wsock)
+{
+	struct wsock_table *table = wsock->table;
+
+	wsock->flag_in_pool = 1;
+	wsock->next = table->wsock_pool.next;
+	table->wsock_pool.next = wsock;
+	table->pool_count++;
+}
+
 struct wsock *wsock_add_new_tcp_client(
 		struct wsock_table *table, char *str_serv_addr, unsigned short int serv_port, unsigned short int clnt_port, int timeout, void *expand_data,
-		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
+		void (*fn_receive) (struct wsock_table *, struct wsock *, unsigned char *, int, int *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *))
 {
 	int sock, tmp;
 	struct epoll_event ep_event;
 	struct wsock *lp_wsock;
-	unsigned char *buff;
-	unsigned int buff_size;
 	char *str_local_ip_v4="127.0.0.1";
 	struct wsock_addr serv_info;
 	struct wsock_addr clnt_info;
@@ -325,55 +374,45 @@ struct wsock *wsock_add_new_tcp_client(
 		if(wsock_connect_wait(sock, (struct sockaddr *) &serv_info.v4, sizeof(serv_info.v4), timeout) < 0) {
 			wsock_table_unlock(table);
 			close(sock);
-			syslog(LOG_INFO, LOG_HEAD "Connect to Server(%s:%d) is failed.(timeout : %d seconds)", LOG_HEAD_PARAM, serv_info.ch_ip, serv_info.h_port, timeout);
+			syslog(LOG_INFO, LOG_HEAD "Error: Connect to Server(%s:%d) is failed.(timeout : %d seconds)", LOG_HEAD_PARAM, serv_info.ch_ip, serv_info.h_port, timeout);
 			return NULL;
 		}
 #endif
 
 		fcntl(sock, F_SETFL, O_NONBLOCK); /* Change the socket into non-blocking state	*/
 
-		if((table->element_count_max - table->element_count_current) == 0) {
+		lp_wsock = wsock_get_element(table);
+		if(lp_wsock == NULL) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "pool is empty.", LOG_HEAD_PARAM);
+			syslog(LOG_INFO, LOG_HEAD "Error: pool is empty.", LOG_HEAD_PARAM);
 			close(sock);
 			return NULL;
 		}
-		lp_wsock = table->wsock_pool.next;
 
 		memset(&ep_event, 0, sizeof(ep_event));
 		ep_event.events = EPOLLIN|EPOLLET;
 		ep_event.data.ptr = (void *) lp_wsock;
 
-		table->wsock_pool.next = lp_wsock->next;
-		buff = lp_wsock->buff;
-		buff_size = lp_wsock->buff_size;
-
 		wsock_memset(lp_wsock);
 		lp_wsock->sock = sock;
 		lp_wsock->ep_event = ep_event;
 		lp_wsock->type = WSOCK_TCP_CLIENT_SINGLE;
-		lp_wsock->buff = buff;
-		lp_wsock->buff_size = buff_size;
 		lp_wsock->addr_info = clnt_info;
+		lp_wsock->expand_data = expand_data;
 		lp_wsock->fn_connection = NULL;
 		lp_wsock->fn_disconnection = fn_disconnection;
 		lp_wsock->fn_receive = fn_receive;
-		lp_wsock->next = table->wsock_head.next;
 
 		if(epoll_ctl(table->epoll_fd, EPOLL_CTL_ADD, sock, &ep_event)) {
-			lp_wsock->flag_in_pool = 1;
-			lp_wsock->next = table->wsock_pool.next;
-			table->wsock_pool.next = lp_wsock;
+			wsock_release_element(lp_wsock);
 			wsock_table_unlock(table);
 			strerror_r(errno, str_error, 256);
 			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return NULL;
 		}
-		if(table->wsock_head.next != NULL) {
-			table->wsock_head.next->prev = lp_wsock;
-		}
-		table->wsock_head.next = lp_wsock;
+
+		wsock_add_element(lp_wsock);
 		table->element_count_current++;
 
 		wsock_table_unlock(table);
@@ -385,51 +424,49 @@ struct wsock *wsock_add_new_tcp_client(
 int wsock_add_new_tcp_server(
 		struct wsock_table *table, char *str_addr, unsigned short int port, int backlog, int client_count, void *expand_data,
 		void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *),
-		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
+		void (*fn_receive) (struct wsock_table *, struct wsock *, unsigned char *, int, int *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *))
 {
 	int sock, tmp;
 	struct epoll_event ep_event;
 	struct wsock *lp_wsock;
-	unsigned char *buff;
-	unsigned int buff_size;
 	struct wsock_addr serv_info;
 	char str_error[256];
 
 	if(table == NULL) {
-		syslog(LOG_INFO, LOG_HEAD "table is not init.", LOG_HEAD_PARAM);
+		syslog(LOG_INFO, LOG_HEAD "Error : table is not init.", LOG_HEAD_PARAM);
 		return -1;
 	}
 
 
 	memset(&serv_info, 0, sizeof(serv_info));
 	if(wsock_conv_str_address(str_addr, strlen(str_addr), port, &serv_info) < 0) {
-		syslog(LOG_INFO, LOG_HEAD "address(%s) is wrong.", LOG_HEAD_PARAM, str_addr);
+		syslog(LOG_INFO, LOG_HEAD "Error : address(%s) is wrong.", LOG_HEAD_PARAM, str_addr);
 		return -1;
 	}
 
 	wsock_table_lock(table);
 	if((table->element_count_max - table->element_count_current) < client_count+1) {
-		syslog(LOG_INFO, LOG_HEAD "table slot count is less than requirement slots.(Left count : %d, Requirement count : %d +1 is Server itself)", LOG_HEAD_PARAM, table->element_count_max - table->element_count_current, client_count+1);
+		syslog(LOG_INFO, LOG_HEAD "Error : table slot count is less than requirement slots.(Left count : %d, Requirement count : %d +1 is Server itself)", LOG_HEAD_PARAM, table->element_count_max - table->element_count_current, client_count+1);
 		wsock_table_unlock(table);
 		return -1;
 	}
 
 	if(table->flag_running == 1) {
 		wsock_table_unlock(table);
-		syslog(LOG_INFO, LOG_HEAD "table is not init.", LOG_HEAD_PARAM);
+		syslog(LOG_INFO, LOG_HEAD "Error : add TCP Server is failed. table is running.", LOG_HEAD_PARAM);
 		return -1;
 	}
 
 	if(serv_info.flag_v6 == 1) {
 		wsock_table_unlock(table);
-		syslog(LOG_INFO, LOG_HEAD "IPv6 Service don't support yet.", LOG_HEAD_PARAM);
+		syslog(LOG_INFO, LOG_HEAD "Error : IPv6 Service don't support yet.", LOG_HEAD_PARAM);
 		return -1;
 	} else {
 		if((sock = socket(serv_info.v4.sin_family, SOCK_STREAM, 0)) < 0) {
 			wsock_table_unlock(table);
 			strerror_r(errno, str_error, 256);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
+			syslog(LOG_INFO, LOG_HEAD "Error : %s", LOG_HEAD_PARAM, str_error);
 			return -1;
 		}
 
@@ -437,7 +474,7 @@ int wsock_add_new_tcp_server(
 		if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp)) < 0) {
 			wsock_table_unlock(table);
 			strerror_r(errno, str_error, 256);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
+			syslog(LOG_INFO, LOG_HEAD "Error : %s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
@@ -445,7 +482,7 @@ int wsock_add_new_tcp_server(
 		if(bind(sock, (struct sockaddr *) &serv_info.v4, sizeof(serv_info.v4)) < 0) {
 			wsock_table_unlock(table);
 			strerror_r(errno, str_error, 256);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
+			syslog(LOG_INFO, LOG_HEAD "Error : %s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
@@ -453,56 +490,47 @@ int wsock_add_new_tcp_server(
 		if(listen(sock, backlog) < 0) {
 			wsock_table_unlock(table);
 			strerror_r(errno, str_error, 256);
-			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
+			syslog(LOG_INFO, LOG_HEAD "Error : %s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
 
 		fcntl(sock, F_SETFL, O_NONBLOCK); /* Change the socket into non-blocking state	*/
 
-		if((table->element_count_max - table->element_count_current) == 0) {
+		lp_wsock = wsock_get_element(table);
+		if(lp_wsock == NULL) {
 			wsock_table_unlock(table);
-			syslog(LOG_INFO, LOG_HEAD "pool is empty.", LOG_HEAD_PARAM);
+			syslog(LOG_INFO, LOG_HEAD "Error : pool is empty.", LOG_HEAD_PARAM);
 			close(sock);
 			return -1;
 		}
-		lp_wsock = table->wsock_pool.next;
 
 		memset(&ep_event, 0, sizeof(ep_event));
 		ep_event.events = EPOLLIN|EPOLLET;
 		ep_event.data.ptr = (void *) lp_wsock;
 
-		table->wsock_pool.next = lp_wsock->next;
-		buff = lp_wsock->buff;
-		buff_size = lp_wsock->buff_size;
-		//memset(lp_wsock, 0, sizeof(struct wsock));
 		wsock_memset(lp_wsock);
 		lp_wsock->sock = sock;
 		lp_wsock->ep_event = ep_event;
 		lp_wsock->type = WSOCK_TCP_SERVER;
-		lp_wsock->buff = buff;
-		lp_wsock->buff_size = buff_size;
 		lp_wsock->addr_info = serv_info;
 		lp_wsock->data.server.client_count_max = client_count;
+		lp_wsock->expand_data = expand_data;
 		lp_wsock->fn_connection = fn_connection;
 		lp_wsock->fn_disconnection = fn_disconnection;
 		lp_wsock->fn_receive = fn_receive;
-		lp_wsock->next = table->wsock_head.next;
 
 		if(epoll_ctl(table->epoll_fd, EPOLL_CTL_ADD, sock, &ep_event)) {
-			lp_wsock->flag_in_pool = 1;
-			lp_wsock->next = table->wsock_pool.next;
-			table->wsock_pool.next = lp_wsock;
+			wsock_release_element(lp_wsock);
 			wsock_table_unlock(table);
 			strerror_r(errno, str_error, 256);
 			syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 			close(sock);
 			return -1;
 		}
-		if(table->wsock_head.next != NULL) {
-			table->wsock_head.next->prev = lp_wsock;
-		}
-		table->wsock_head.next = lp_wsock;
+
+		wsock_add_element(lp_wsock);
+
 		table->element_count_current++;
 
 		wsock_table_unlock(table);
@@ -513,9 +541,7 @@ int wsock_add_new_tcp_server(
 
 int wsock_table_run(struct wsock_table *table)
 {
-	int sock, event_count, i, sock_len;
-	unsigned char *buff;
-	unsigned int buff_size;
+	int sock, event_count, i, front, rear, sock_len;
 	sigset_t sigs;
 	int recv_ret;
 	struct wsock *lp_element;
@@ -531,6 +557,16 @@ int wsock_table_run(struct wsock_table *table)
 	sigfillset(&sigs);
 
 	while(table->flag_exit == 0) {
+		for(front=table->q_front, rear=table->q_rear; front != rear; front = (front+1)%table->q_size) {
+			lp_element = table->wsock_release_q[front];
+			if(lp_element->fn_disconnection != NULL) {
+				lp_element->fn_disconnection(table, lp_element);
+			}
+			lp_element->next = table->wsock_pool.next;
+			table->wsock_pool.next = lp_element;
+		}
+		table->q_front = front;
+
 		event_count = epoll_pwait(table->epoll_fd,
 								table->ep_event,
 								table->element_count_max,
@@ -559,8 +595,11 @@ int wsock_table_run(struct wsock_table *table)
 						syslog(LOG_INFO, LOG_HEAD "%s", LOG_HEAD_PARAM, str_error);
 						continue;
 					}
+					wsock_table_lock(table);
+					lp_wsock = wsock_get_element(table);
+					wsock_table_unlock(table);
 					if(lp_element->data.server.client_count_current ==
-							lp_element->data.server.client_count_max) {
+							lp_element->data.server.client_count_max || lp_wsock == NULL) {
 						syslog(LOG_INFO, LOG_HEAD "Client slot is full(max : %d)", LOG_HEAD_PARAM, lp_element->data.server.client_count_max);
 						close(sock);
 						continue;
@@ -573,10 +612,10 @@ int wsock_table_run(struct wsock_table *table)
 					ep_event.events = EPOLLIN|EPOLLET;
 					fcntl(sock, F_SETFL, O_NONBLOCK); // Sock Opt change : Non-Blocking mode
 
-					wsock_table_lock(table);
-					lp_wsock = table->wsock_pool.next;
 					ep_event.data.ptr = (void *) lp_wsock;
 					if(epoll_ctl(table->epoll_fd, EPOLL_CTL_ADD, sock, &ep_event)) {
+						wsock_table_lock(table);
+						wsock_release_element(lp_wsock);
 						wsock_table_unlock(table);
 						strerror_r(errno, str_error, 256);
 						syslog(LOG_INFO, LOG_HEAD "Add a client is failed(%s).", LOG_HEAD_PARAM, str_error);
@@ -588,28 +627,20 @@ int wsock_table_run(struct wsock_table *table)
 					lp_element->data.server.client_count_current++;
 					table->element_count_current++;
 
-					table->wsock_pool.next = lp_wsock->next;
-					buff = lp_wsock->buff;
-					buff_size = lp_wsock->buff_size;
-					//memset(lp_wsock, 0, sizeof(struct wsock));
 					wsock_memset(lp_wsock);
 					lp_wsock->type = WSOCK_TCP_CLIENT;
 					lp_wsock->sock = sock;
-					lp_wsock->buff = buff;
-					lp_wsock->buff_size = buff_size;
 					lp_wsock->addr_info = sock_info;
 					lp_wsock->ep_event = ep_event;
 					lp_wsock->data.client.server = lp_element;
-					lp_wsock->next = table->wsock_head.next;
 					lp_wsock->fn_connection = lp_element->fn_connection;
 					lp_wsock->fn_receive = lp_element->fn_receive;
 					lp_wsock->fn_disconnection = lp_element->fn_disconnection;
-					if(table->wsock_head.next != NULL) {
-						table->wsock_head.next->prev = lp_wsock;
-					}
-					table->wsock_head.next = lp_wsock;
 
+					wsock_table_lock(table);
+					wsock_add_element(lp_wsock);
 					wsock_table_unlock(table);
+
 					if(lp_wsock->fn_connection != NULL) {
 						lp_wsock->fn_connection(table, lp_element, lp_wsock);
 					}
@@ -634,16 +665,6 @@ receive_from_client:
 disconnection_client:
 						syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting...", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
 						wsock_table_lock(table);
-						if(lp_element->flag_in_pool == 1) {
-							wsock_table_unlock(table);
-							syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnected already...", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
-							continue;
-						}
-
-						if(lp_element->fn_disconnection != NULL) {
-							lp_element->fn_disconnection(table, lp_element);
-						}
-
 						if(wsock_conn_release(lp_element) < 0) {
 							wsock_table_unlock(table);
 							break;
@@ -657,10 +678,11 @@ disconnection_client:
 						goto disconnection_client;
 					} else { // Received data
 						lp_element->read_len = recv_ret;
+						lp_element->data.client.recv_bytes += recv_ret;
+
 						if(lp_element->fn_receive != NULL) {
 							lp_element->fn_receive(table, lp_element, lp_element->buff, lp_element->read_len, &lp_element->offset);
 						}
-						lp_element->data.client.recv_bytes += recv_ret;
 						if(recv_ret == lp_element->buff_size) {
 							syslog(LOG_INFO, LOG_HEAD "[%s:%d] Receive Continue", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
 							goto receive_from_client;
@@ -699,6 +721,9 @@ void wsock_memset(struct wsock *wsock)
 	memset(&wsock->data, 0, sizeof(union wsock_data));
 	wsock->time_begin = 0;
 	wsock->time_end = 0;
+	wsock->expand_data = NULL;
+	wsock->user_data1 = NULL;
+	wsock->user_data2 = NULL;
 	wsock->fn_connection = NULL;
 	wsock->fn_receive = NULL;
 	wsock->fn_disconnection = NULL;
@@ -722,6 +747,7 @@ int wsock_conn_release(struct wsock *wsock)
 			table->flag_exit = 1;
 			return -1;
 		}
+
 		if(wsock->next != NULL) {
 			wsock->next->prev = wsock->prev;
 		}
@@ -733,8 +759,8 @@ int wsock_conn_release(struct wsock *wsock)
 
 		close(wsock->sock);
 
-		wsock->next = table->wsock_pool.next;
-		table->wsock_pool.next = wsock;
+		table->wsock_release_q[table->q_rear] = wsock;
+		table->q_rear = (table->q_rear + 1)%(table->q_size);
 
 		// Count update
 		table->element_count_current--; 

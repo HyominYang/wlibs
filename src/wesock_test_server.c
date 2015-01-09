@@ -5,7 +5,7 @@ void f_conn (struct wsock_table *table, struct wsock *serv, struct wsock *clnt)
 	printf("%s:%d is connected.\n", clnt->addr_info.ch_ip, clnt->addr_info.h_port);
 }
 
-void f_recv (struct wsock_table *table, struct wsock *clnt, char *buff, int read_len, int *offset)
+void f_recv (struct wsock_table *table, struct wsock *clnt, unsigned char *buff, int read_len, int *offset)
 {
 	static int rd_len = 0;
 	rd_len += read_len;

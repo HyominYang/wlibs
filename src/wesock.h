@@ -71,8 +71,14 @@ struct wsock
 	time_t time_begin;
 	time_t time_end;
 
+	// User's data
+	void *expand_data;
+	void *user_data1;
+	void *user_data2;
+	// end User's data
+
 	void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *);
-	void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *);
+	void (*fn_receive) (struct wsock_table *, struct wsock *, unsigned char *, int, int *);
 	void (*fn_disconnection) (struct wsock_table *, struct wsock *);
 	int flag_in_pool;
 	struct wsock_table *table;
@@ -91,9 +97,14 @@ struct wsock_table
 	int flag_exit;
 	int timeout;
 	int element_count_current;
+	int pool_count;
 	int element_count_max;
+	int q_size;
+	int q_front;
+	int q_rear;
+	struct wsock **wsock_release_q;
+
 	struct epoll_event *ep_event;
-	struct epoll_event **ep_event_continue;
 	struct wsock *wsock_mem;
 	struct wsock wsock_pool;
 	struct wsock wsock_head;
@@ -103,20 +114,23 @@ struct wsock_table
 // Start Table
 int wsock_table_run(struct wsock_table *table);
 
+// Release Table
+void wsock_release_tcp_table(struct wsock_table *table, int element_count, int  buff_size, int timeout);
+
 // Create Table
 int wsock_create_tcp_table(struct wsock_table *table, int element_count, int buff_size, int timeout);
 
 // Add New TCP Client
 struct wsock *wsock_add_new_tcp_client(
 		struct wsock_table *table, char *str_serv_addr, unsigned short int serv_port, unsigned short int clnt_port, int timeout, void *expand_data,
-		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
+		void (*fn_receive) (struct wsock_table *, struct wsock *, unsigned char *, int, int *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *));
 
 // Add New TCP Server
 int wsock_add_new_tcp_server(
 		struct wsock_table *table, char *str_addr, unsigned short int port, int backlog, int client_count, void *expand_data,
 		void (*fn_connection) (struct wsock_table *, struct wsock *, struct wsock *),
-		void (*fn_receive) (struct wsock_table *, struct wsock *, char *, int, int *),
+		void (*fn_receive) (struct wsock_table *, struct wsock *, unsigned char *, int, int *),
 		void (*fn_disconnection) (struct wsock_table *, struct wsock *));
 // Clear wsock
 void wsock_memset(struct wsock *wsock);

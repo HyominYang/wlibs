@@ -136,7 +136,7 @@ int wsock_add_new_tcp_server(
 void wsock_memset(struct wsock *wsock);
 
 // Connection Release
-int wsock_conn_release(struct wsock *wsock);
+void wsock_close(struct wsock *wsock);
 
 // Convert a String address to a Data address
 int wsock_conv_str_address(char *str_addr, int str_addr_len, unsigned short int port, struct wsock_addr *serv_info);

@@ -42,6 +42,54 @@ inline static void wsock_table_unlock(struct wsock_table *table)
 	pthread_spin_unlock(&table->lock);
 }
 
+int wsock_conn_release(struct wsock *wsock)
+{
+	if(wsock->flag_in_pool == 0) {
+		struct wsock_table *table;
+		char str_error[256];
+
+		wsock->flag_in_pool = 1;
+		table = wsock->table;
+		if(epoll_ctl(table->epoll_fd, EPOLL_CTL_DEL, wsock->sock, &wsock->ep_event)) {
+			strerror_r(errno, str_error, 256);
+			syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting : Element delete error : %s", LOG_HEAD_PARAM, wsock->addr_info.ch_ip, wsock->addr_info.h_port, str_error);
+			table->flag_exit = 1;
+			return -1;
+		}
+
+		if(wsock->next != NULL) {
+			wsock->next->prev = wsock->prev;
+		}
+		if(wsock->prev != NULL) {
+			wsock->prev->next = wsock->next;
+		} else {
+			table->wsock_head.next = wsock->next;
+		}
+
+		close(wsock->sock);
+
+		table->wsock_release_q[table->q_rear] = wsock;
+		table->q_rear = (table->q_rear + 1)%(table->q_size);
+
+		// Count update
+		table->element_count_current--; 
+		switch(wsock->type) {
+			case WSOCK_TCP_CLIENT:
+				wsock->data.client.server->data.server.client_count_current--;
+			case WSOCK_TCP_CLIENT_SINGLE:
+				syslog(LOG_INFO, LOG_HEAD "[%s:%d] Send(%lu) Receive(%lu)", LOG_HEAD_PARAM, wsock->addr_info.ch_ip, wsock->addr_info.h_port, wsock->data.client.sent_bytes, wsock->data.client.recv_bytes);
+				break;
+		}
+	} else {
+#ifdef WESOCK_DEBUG
+		syslog(LOG_INFO, LOG_HEAD "Connection Release is failed. Disconnected already...", LOG_HEAD_PARAM);
+#endif
+		return 0;
+	}
+
+	return 0;
+}
+
 void wsock_release_tcp_table(struct wsock_table *table, int element_count, int  buff_size, int timeout)
 {
 	table->flag_exit = 1;
@@ -747,53 +795,11 @@ void wsock_memset(struct wsock *wsock)
 	wsock->next = NULL;
 }
 
-int wsock_conn_release(struct wsock *wsock)
+void wsock_close(struct wsock *wsock)
 {
-	if(wsock->flag_in_pool == 0) {
-		struct wsock_table *table;
-		char str_error[256];
-
-		wsock->flag_in_pool = 1;
-		table = wsock->table;
-		if(epoll_ctl(table->epoll_fd, EPOLL_CTL_DEL, wsock->sock, &wsock->ep_event)) {
-			wsock_table_unlock(table);
-			strerror_r(errno, str_error, 256);
-			syslog(LOG_INFO, LOG_HEAD "[%s:%d] Disconnecting : Element delete error : %s", LOG_HEAD_PARAM, wsock->addr_info.ch_ip, wsock->addr_info.h_port, str_error);
-			table->flag_exit = 1;
-			return -1;
-		}
-
-		if(wsock->next != NULL) {
-			wsock->next->prev = wsock->prev;
-		}
-		if(wsock->prev != NULL) {
-			wsock->prev->next = wsock->next;
-		} else {
-			table->wsock_head.next = wsock->next;
-		}
-
-		close(wsock->sock);
-
-		table->wsock_release_q[table->q_rear] = wsock;
-		table->q_rear = (table->q_rear + 1)%(table->q_size);
-
-		// Count update
-		table->element_count_current--; 
-		switch(wsock->type) {
-			case WSOCK_TCP_CLIENT:
-				wsock->data.client.server->data.server.client_count_current--;
-			case WSOCK_TCP_CLIENT_SINGLE:
-				syslog(LOG_INFO, LOG_HEAD "[%s:%d] Send(%lu) Receive(%lu)", LOG_HEAD_PARAM, wsock->addr_info.ch_ip, wsock->addr_info.h_port, wsock->data.client.sent_bytes, wsock->data.client.recv_bytes);
-				break;
-		}
-	} else {
-#ifdef WESOCK_DEBUG
-		syslog(LOG_INFO, LOG_HEAD "Connection Release is failed. Disconnected already...", LOG_HEAD_PARAM);
-#endif
-		return 0;
-	}
-
-	return 0;
+	wsock_table_lock(wsock->table);
+	wsock_conn_release(wsock);
+	wsock_table_unlock(wsock->table);
 }
 
 int wsock_send(struct wsock *wsock, const void *buff, int len)

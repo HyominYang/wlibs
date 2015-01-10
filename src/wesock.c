@@ -650,7 +650,7 @@ int wsock_table_run(struct wsock_table *table)
 					wsock_table_unlock(table);
 					if(lp_element->data.server.client_count_current ==
 							lp_element->data.server.client_count_max || lp_wsock == NULL) {
-						syslog(LOG_INFO, LOG_HEAD "Client slot is full(max : %d)", LOG_HEAD_PARAM, lp_element->data.server.client_count_max);
+						syslog(LOG_INFO, LOG_HEAD "Client slot is full(%d/%d, Pool %d)", LOG_HEAD_PARAM, lp_element->data.server.client_count_current, lp_element->data.server.client_count_max, table->pool_count);
 						close(sock);
 						continue;
 					}
@@ -731,7 +731,7 @@ disconnection_client:
 						switch(errno) {
 							case EAGAIN:
 								break;
-							deefault: 
+							default: 
 								strerror_r(errno, str_error, 256);
 								syslog(LOG_INFO, LOG_HEAD "[%s:%d] Data recieve error : %s(%d). Go to disconnect with peer.", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port, str_error, errno);
 								goto disconnection_client;

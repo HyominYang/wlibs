@@ -593,7 +593,7 @@ int wsock_table_run(struct wsock_table *table)
 {
 	int sock, event_count, i, front, rear, sock_len;
 	sigset_t sigs;
-	int recv_ret;
+	int recv_ret, left_buff_len;
 	struct wsock *lp_element;
 	struct wsock_addr sock_info;
 	struct epoll_event ep_event;
@@ -706,7 +706,8 @@ receive_from_client:
 						wsock_table_unlock(table);
 						continue;
 					}
-					recv_ret = recv(lp_element->sock, lp_element->buff + lp_element->offset, lp_element->buff_size, 0);
+					left_buff_len = lp_element->buff_size - lp_element->offset;
+					recv_ret = recv(lp_element->sock, lp_element->buff + lp_element->offset, left_buff_len, 0);
 					wsock_table_unlock(table);
 					strerror_r(errno, str_error, 256);
 #ifdef WESOCK_DEBUG
@@ -744,7 +745,7 @@ disconnection_client:
 						if(lp_element->fn_receive != NULL) {
 							lp_element->fn_receive(table, lp_element, lp_element->buff, lp_element->read_len, &lp_element->offset);
 						}
-						if(recv_ret == lp_element->buff_size) {
+						if(recv_ret == left_buff_len) {
 #ifdef WESOCK_DEBUG
 							syslog(LOG_INFO, LOG_HEAD "[%s:%d] Receive Continue", LOG_HEAD_PARAM, lp_element->addr_info.ch_ip, lp_element->addr_info.h_port);
 #endif

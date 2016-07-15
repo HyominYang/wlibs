@@ -31,6 +31,7 @@ int main(int argc, char **argv)
 			f_disconn
 			) < 0) {
 		printf("Error : wsock_add_new_tcp_server() is failed.\n");
+		return -1;
 	}
 	printf("Server Start!!!\n");
 	wsock_table_run(&table);

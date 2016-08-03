@@ -106,7 +106,8 @@ void message_parser(struct wsock *clnt, char *buff)
 	else if(msg.command == REQ_DOWNLOAD_PACK) {
 		printf("<< REQ_DOWNLOAD_PACK\n");
 		//int fd = open("./a.txt", O_TRUNC|O_CREAT|O_SYNC);
-		int fd = open("./aaa.txt", O_RDONLY);
+		//int fd = open("/root/trunk_app/app.tar", O_RDONLY);
+		int fd = open("./app.tar", O_RDONLY);
 		if(fd < 0) {
 			printf("open error\n");
 			return;
@@ -118,10 +119,12 @@ void message_parser(struct wsock *clnt, char *buff)
 		close(fd);
 		res_msg->len = read_len + sizeof(msg_header_t);
 		res_msg->command = RES_DOWNLOAD_PACK;
-		if(wsock_send(clnt, buff, res_msg->len) < 0) {
+		if(send(clnt->sock, buff, res_msg->len, 0) < 0) {
+		//if(wsock_send(clnt, buff, res_msg->len) < 0) {
 			printf(">> RES_DOWNLOAD_PACK (SENDING FAILED)\n", res_msg->len);
 			return;
 		}
+		hexdump("send.dump", (unsigned char *)buff+sizeof(msg_header_t), read_len);
 		printf(">> RES_DOWNLOAD_PACK (%d bytes)\n", res_msg->len);
 	}
 }

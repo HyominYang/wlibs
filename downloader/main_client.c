@@ -1,6 +1,6 @@
 #include "global.h"
 
-char *buff = NULL;
+char *g_buff = NULL;
 int timeout = 0;
 int quit = 0;
 int state=0;
@@ -33,13 +33,13 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	buff = malloc(1024 * 1024 * 10);
-	if(buff == NULL) {
+	g_buff = malloc(BUFF_MAX);
+	if(g_buff == NULL) {
 		printf("malloc() is failed.\n");
 		return -1;
 	}
 
-	if(wsock_create_tcp_table(&table, 1, 1024 * 1024, 60) < 0) {
+	if(wsock_create_tcp_table(&table, 1, BUFF_MAX, 60) < 0) {
 		printf("wsock_create_tcp_table() is failed.\n");
 		return -1;
 	}
@@ -78,6 +78,9 @@ void f_conn (struct wsock_table *table, struct wsock *serv, struct wsock *clnt)
 	printf("%s:%d is connected.\n", clnt->addr_info.ch_ip, clnt->addr_info.h_port);
 }
 
+#ifndef DEBUG__
+#define DEBUG__ printf("%s:%d\n", __func__, __LINE__)
+#endif
 void f_recv (struct wsock_table *table, struct wsock *clnt, unsigned char *buff, int read_len, int *offset)
 {
 	timeout = 0;
@@ -110,8 +113,8 @@ f_recv_loop:
 
 void procedure(struct wsock *wsock)
 {
-	msg_header_t *msg = (msg_header_t *) buff;
-	char *data = ((char *)buff + sizeof(msg_header_t));
+	msg_header_t *msg = (msg_header_t *) g_buff;
+	char *data = ((char *)g_buff + sizeof(msg_header_t));
 	if(state == 0) {
 		msg->len = sizeof(msg_header_t);
 		msg->command = REQ_DOWNLOAD_PACK;
@@ -130,7 +133,7 @@ void procedure(struct wsock *wsock)
 void message_parser(struct wsock *clnt, char *buff)
 {
 	msg_header_t msg = *((msg_header_t *)buff);
-	msg_header_t *res_msg = (msg_header_t *)buff;
+	msg_header_t *res_msg = (msg_header_t *)g_buff;
 	int data_len = msg.len - sizeof(msg_header_t);
 
 	char *data = (char *) (buff + sizeof(msg_header_t));
@@ -141,12 +144,12 @@ void message_parser(struct wsock *clnt, char *buff)
 	}
 	else if(msg.command == REQ_DOWNLOAD_PACK) {
 		//int fd = open("./a.txt", O_TRUNC|O_CREAT|O_SYNC);
-		int fd = open("./a.txt", O_RDONLY);
+		int fd = open("/root/trunk_app/app.tgz", O_RDONLY);
 		if(fd < 0) {
 			printf("open error\n");
 			return;
 		}
-		int read_len = read(fd, buff+sizeof(msg_header_t), BUFF_MAX);
+		int read_len = read(fd, g_buff+sizeof(msg_header_t), BUFF_MAX);
 		close(fd);
 		if(read_len <= 0) {
 			res_msg->len = read_len + sizeof(msg_header_t);
@@ -155,19 +158,30 @@ void message_parser(struct wsock *clnt, char *buff)
 			res_msg->len = read_len + sizeof(msg_header_t);
 			res_msg->command = RES_DOWNLOAD_PACK;
 		}
-		if(wsock_send(clnt, buff, read_len) < 0) {
+		if(wsock_send(clnt, g_buff, read_len) < 0) {
 			printf("send failed.\n");
 		}
 	}
 	if(msg.command == RES_DOWNLOAD_PACK) {
 		printf(">> RES_DOWNLOAD_PACK\n");
-		int fd = open("./b.txt", O_WRONLY|O_TRUNC|O_SYNC|O_CREAT);
+		//int fd = open("/usr/local/app.tar", O_WRONLY|O_TRUNC|O_CREAT);
+		int fd = open("./_app.tar", O_WRONLY|O_TRUNC|O_CREAT);//|O_DSYNC | O_RSYNC);
 		if(fd < 0) {
 			printf("open error\n");
 			return;
 		}
 		write(fd, data, data_len);
+		sync();
 		close(fd);
+		hexdump("recv.dump", (unsigned char *)data, data_len);
+
+		//printf("extract files....\n");
+		//system("tar -xvf /usr/local/app.tgz -C /usr/local/");
+		//system("tar -xvf ./_app.tar"); 
+		//printf("mod group/user id\n");
+		//system("chown -R pi.pi /usr/local/app");
+		sleep(1);
+		exit(1);
 	}
 }
 

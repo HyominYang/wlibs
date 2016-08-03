@@ -232,6 +232,7 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 	orgSockStat = newSockStat; 
 	newSockStat |= O_NONBLOCK; 
 
+#if 1 // 2016-08-03
 	// Non blocking 상태로 만든다.  
 	if(fcntl(sockfd, F_SETFL, newSockStat) < 0) 
 	{ 
@@ -240,6 +241,7 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 		syslog(LOG_INFO, LOG_HEAD "Error : F_SETLF - %s.", LOG_HEAD_PARAM, str_error);
 		return -1; 
 	} 
+#endif
 
 	// 연결을 기다린다. 
 	// Non blocking 상태이므로 바로 리턴한다. 
@@ -427,7 +429,9 @@ struct wsock *wsock_add_new_tcp_client(
 		}
 #endif
 
+#if 1//2016-08-03
 		fcntl(sock, F_SETFL, O_NONBLOCK); /* Change the socket into non-blocking state	*/
+#endif
 
 		lp_wsock = wsock_get_element(table);
 		if(lp_wsock == NULL) {
@@ -545,7 +549,9 @@ int wsock_add_new_tcp_server(
 			return -1;
 		}
 
+#if 1 //2016-08-03
 		fcntl(sock, F_SETFL, O_NONBLOCK); /* Change the socket into non-blocking state	*/
+#endif
 
 		lp_wsock = wsock_get_element(table);
 		if(lp_wsock == NULL) {
@@ -660,7 +666,9 @@ int wsock_table_run(struct wsock_table *table)
 					inet_ntop(AF_INET, &sock_info.v4.sin_addr.s_addr, sock_info.ch_ip, WSOCK_ADDR_IP_STRLEN_MAX);
 					memset(&ep_event, 0, sizeof(ep_event));
 					ep_event.events = EPOLLIN|EPOLLET;
+#if 0 // 2016-08-03
 					fcntl(sock, F_SETFL, O_NONBLOCK); // Sock Opt change : Non-Blocking mode
+#endif
 
 					ep_event.data.ptr = (void *) lp_wsock;
 					if(epoll_ctl(table->epoll_fd, EPOLL_CTL_ADD, sock, &ep_event)) {
@@ -818,6 +826,7 @@ int wsock_send(struct wsock *wsock, const void *buff, int len)
 	offset = 0;
 	left_len = len;
 	do {
+//		usleep(50000);
 		wsock_table_lock(wsock->table);
 		if(wsock->flag_in_pool == 1) {
 #ifdef WESOCK_DEBUG
@@ -826,7 +835,15 @@ int wsock_send(struct wsock *wsock, const void *buff, int len)
 			wsock_table_unlock(wsock->table);
 			break;
 		}
-		wrote_len = send(wsock->sock, buff, left_len, MSG_DONTWAIT);
+		//{
+		//	const int send_bytes_max = 1400;
+		//	if(left_len > send_bytes_max) {
+		//		wrote_len = send(wsock->sock, buff, send_bytes_max, MSG_DONTWAIT);
+		//	} else {
+				//wrote_len = send(wsock->sock, buff, left_len, MSG_DONTWAIT);
+				wrote_len = send(wsock->sock, buff, left_len, 0);
+		//	}
+		//}
 		wsock_table_unlock(wsock->table);
 		if(wrote_len == left_len) {
 			wsock->data.client.sent_bytes += wrote_len;
@@ -834,7 +851,7 @@ int wsock_send(struct wsock *wsock, const void *buff, int len)
 		}
 		else if(wrote_len < 0) {
 			if(errno == EAGAIN) {
-				usleep(1000);
+				usleep(100000);
 				continue;
 			}
 			strerror_r(errno, err_buff, 512);
@@ -847,7 +864,7 @@ int wsock_send(struct wsock *wsock, const void *buff, int len)
 			wsock->data.client.sent_bytes += wrote_len;
 			offset += wrote_len;
 			left_len -= wrote_len;
-			usleep(1);
+			usleep(100);
 		}
 	} while(1);
 

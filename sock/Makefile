@@ -18,8 +18,12 @@ test:
 	$(CC) $(FLAGS_TEST) -o wesock.serv wesock_test_server.c -L. -lwe $(LIBS) 
 	$(CC) $(FLAGS_TEST) -o wesock.clnt wesock_test_client.c -L. -lwe $(LIBS)
 
+install:
+	cp libwe.a ../libs
+
 clean:
 	rm -f $(SLIB_NAME)
 	rm -f $(OBJ)
 	rm -f wesock.serv
 	rm -f wesock.clnt
+	rm -f ../libs/libwe.a

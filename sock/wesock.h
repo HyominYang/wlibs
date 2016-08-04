@@ -46,7 +46,17 @@ struct wsock_addr
 	char ch_ip[WSOCK_ADDR_IP_STRLEN_MAX];
 	unsigned short int h_port; ///< port : host order
 };
-
+union wsock_data {
+		struct {
+			unsigned long int recv_bytes;
+			unsigned long int sent_bytes;
+			struct wsock *server;
+		} client;
+		struct {
+			int client_count_current;
+			int client_count_max;
+		} server;
+};
 struct wsock
 {
 	int sock;
@@ -57,17 +67,7 @@ struct wsock
 	int offset;
 	int read_len;
 	int buff_size;
-	union wsock_data {
-		struct {
-			unsigned long int recv_bytes;
-			unsigned long int sent_bytes;
-			struct wsock *server;
-		} client;
-		struct {
-			int client_count_current;
-			int client_count_max;
-		} server;
-	} data;
+	union wsock_data data;
 	time_t time_begin;
 	time_t time_end;
 
@@ -146,4 +146,6 @@ int wsock_connect_wait(int sockfd, struct sockaddr *saddr, int addrsize, int sec
 
 // Send Data
 int wsock_send(struct wsock *wsock, const void *buff, int len);
+
 #endif /* W_ESOCKET_H_ */
+

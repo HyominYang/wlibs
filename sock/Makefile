@@ -1,4 +1,4 @@
-CC=gcc
+CC=g++
 FLAGS=-g -fPIC
 FLAGS_TEST=-g
 

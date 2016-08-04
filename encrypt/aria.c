@@ -42,13 +42,18 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <arpa/inet.h>
 
+#ifndef BYTE_WORD
+#define BYTE_WORD
 typedef unsigned char Byte;
 typedef unsigned int  Word;
+#endif
 
 #undef BIG_ENDIAN
 
-#define LITTLE_ENDIAN
+//#define LITTLE_ENDIAN
 
 #ifdef BIG_ENDIAN
 #undef LITTLE_ENDIAN
@@ -544,7 +549,8 @@ encrypted ciphertext.\n");
 }
 
 #define ARIA_INPUT_UNIT_SZ 16
-int encrypt(Byte *mk, const char *src, const char *dst) {
+int encrypt(Byte *mk, const char *src, const char *dst)
+{
 	Byte rk[16*17];
 	Byte buf[ARIA_INPUT_UNIT_SZ];
 	Byte out[ARIA_INPUT_UNIT_SZ];
@@ -602,7 +608,8 @@ int encrypt(Byte *mk, const char *src, const char *dst) {
     return 0;
 }
 
-int decrypt(Byte *mk, const char *src, const char *dst) {
+int decrypt(Byte *mk, const char *src, const char *dst)
+{
 	Byte rk[16*17];
 	Byte buf[ARIA_INPUT_UNIT_SZ];
 	Byte out[ARIA_INPUT_UNIT_SZ];
@@ -659,5 +666,59 @@ int decrypt(Byte *mk, const char *src, const char *dst) {
 
 	close(fdSrc);
 	close(fdDst);
+    return 0;
+}
+
+int decrypt_fm(Byte *mk, const char *src, char *dst, int *wrote_len)
+{
+	Byte rk[16*17];
+	Byte buf[ARIA_INPUT_UNIT_SZ];
+	Byte out[ARIA_INPUT_UNIT_SZ];
+
+	int offset=0;
+	int fdSrc;
+	struct stat finfo;
+	off_t size;
+	unsigned int checkPayloadLength;
+	int nPadLength;
+	int nWriteLength = ARIA_INPUT_UNIT_SZ;
+
+	if (stat(src, &finfo) != 0) {
+		return -1;
+	}
+	size = finfo.st_size - sizeof(checkPayloadLength);
+
+    if ((fdSrc = open(src, O_RDONLY)) == -1) {
+    	return -1;
+    }
+
+    if (read(fdSrc, &checkPayloadLength, sizeof(checkPayloadLength)) != sizeof(checkPayloadLength)) {
+    	close(fdSrc);
+    	return -1;
+    }
+    checkPayloadLength = ntohl(checkPayloadLength);
+    nPadLength = (checkPayloadLength % ARIA_INPUT_UNIT_SZ == 0) ? 0 : ARIA_INPUT_UNIT_SZ - (checkPayloadLength % ARIA_INPUT_UNIT_SZ);
+
+	DecKeySetup(mk, rk, 128);
+	*wrote_len = size;
+	while (size > 0) {
+		if (read(fdSrc, buf, ARIA_INPUT_UNIT_SZ) != ARIA_INPUT_UNIT_SZ) {
+			close(fdSrc);
+			return -1;
+		}
+
+		Crypt(buf, 12, rk, out);
+		if (nPadLength > 0 && size == ARIA_INPUT_UNIT_SZ) {
+			nWriteLength = ARIA_INPUT_UNIT_SZ - nPadLength;
+		}
+
+
+		memcpy(&dst[offset], out, nWriteLength);
+		offset += nWriteLength;
+
+		size -= ARIA_INPUT_UNIT_SZ;
+	}
+
+	close(fdSrc);
     return 0;
 }

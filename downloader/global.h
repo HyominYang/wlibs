@@ -14,6 +14,12 @@ struct msg_header
 }__attribute__((packed));
 typedef struct msg_header msg_header_t;
 
+struct msg_param
+{
+	int len;
+}__attribute__((packed));
+typedef struct msg_param msg_param_t;
+
 enum {
 	REQ_GET_LICENCE=0,
 	REQ_GET_VERSION,
@@ -46,4 +52,14 @@ void hexdump(char *fname, unsigned char *data, int data_len)
 	fclose(fp);
 }
 
+#ifndef BYTE_WORD
+#define BYTE_WORD
+typedef unsigned char Byte;
+typedef unsigned int  Word;
+#endif
+
+#define SEED "19830916"
+
+int encrypt(Byte *mk, const char *src, const char *dst);
+int decrypt_fm(Byte *mk, const char *src, char *dst, int *wrote_len);
 #endif

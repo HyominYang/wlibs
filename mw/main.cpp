@@ -1,19 +1,74 @@
-//#include "global.h"
-
 #include <iostream>
 #include <fstream>
 using namespace std;
 using std::ofstream;
 using std::ifstream;
 
-#define SEED "830916"
+#define SEED "SMARTKDSC8424334"
 #define PROC_LIST_MAX 10
+
+struct license {
+	string mac;
+	string code;
+};
 
 string proc_list[PROC_LIST_MAX];
 int proc_list_max;
 string my_mac;
 
 #define PROC_LIST_FILEPATH "proc_list.lst"
+#define LIC_FILEPATH "license.lic"
+#define LIC_DEC_FILEPATH "license.dec"
+
+// extern aria.cpp
+#ifndef BYTE_WORD
+#define BYTE_WORD
+typedef unsigned char Byte;
+typedef unsigned int  Word;
+#endif
+
+extern int decrypt_fm(Byte *mk, const char *src, char *dst, int *wrote_len);
+extern int decrypt(Byte *mk, const char *src, const char *dst);
+extern int encrypt(Byte *mk, const char *src, const char *dst);
+// end
+
+#include <string.h>
+int make_lic()
+{
+	if(encrypt((Byte *)SEED, LIC_DEC_FILEPATH, LIC_FILEPATH) < 0) {
+		cout<<"Make license is failed."<<endl;
+		return -1;
+	}
+
+	return 0;
+}
+
+int get_lic(struct license &lic)
+{
+	char buff[255];
+	int wrote_len;
+	char * tmp;
+	char * token;
+	if(decrypt_fm((Byte *)SEED, LIC_FILEPATH, buff, &wrote_len) < 0) {
+		return -1;
+	}
+	buff[wrote_len-1] = '\0';
+
+	token = strtok_r(buff, "|", &tmp);
+	if(token != NULL) {
+		lic.mac = token;
+	} else {
+		return -1;
+	}
+
+	token = strtok_r(NULL, "|", &tmp);
+	if(token != NULL) {
+		lic.code = token;
+	} else {
+		return -1;
+	}
+	return 0;
+}
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -81,11 +136,22 @@ int read_proc_list()
 	return 0;
 }
 
+extern void create_network_procedure();
 int main(int argc, char **argv)
 {
+	//make_lic();
+	struct license lic;
+	if(get_lic(lic) < 0) {
+		cout<<"get a lisence is failed."<<endl;
+		return -1;
+	}
+	cout<<"LIC: "<<lic.mac<<" - "<<lic.code<<endl;
+
 	get_mac();
 	if(read_proc_list() < 0) { return -1; }
 
 	cout<<"MAC: "<<my_mac<<endl;
+	create_network_procedure();
+
 	return 0;
 }

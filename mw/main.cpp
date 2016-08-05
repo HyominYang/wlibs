@@ -10,11 +10,11 @@ using std::ifstream;
 struct license {
 	string mac;
 	string code;
+	string info;
 };
 
 string proc_list[PROC_LIST_MAX];
 int proc_list_max;
-string my_mac;
 
 #define PROC_LIST_FILEPATH "proc_list.lst"
 #define LIC_FILEPATH "license.lic"
@@ -67,9 +67,17 @@ int get_lic(struct license &lic)
 	} else {
 		return -1;
 	}
+
+	token = strtok_r(NULL, "|", &tmp);
+	if(token != NULL) {
+		lic.info = token;
+	} else {
+		lic.info = "<unknown>";
+	}
 	return 0;
 }
 
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -95,7 +103,6 @@ string get_mac()
 				(unsigned char)s.ifr_hwaddr.sa_data[3],
 				(unsigned char)s.ifr_hwaddr.sa_data[4],
 				(unsigned char)s.ifr_hwaddr.sa_data[5]);
-		my_mac = buff;
 	} else {
 		close(fd);
 		return "<none>";
@@ -136,22 +143,65 @@ int read_proc_list()
 	return 0;
 }
 
-extern void create_network_procedure();
+void state_machine();
+extern int create_network_procedure();
 int main(int argc, char **argv)
 {
-	//make_lic();
-	struct license lic;
-	if(get_lic(lic) < 0) {
-		cout<<"get a lisence is failed."<<endl;
-		return -1;
+#ifdef MAKE_LIC
+	if(make_lic() < 0) {
+		cout<<"\nGenerate a license is failed!. Need a 'license.dec'\n"<<endl;
+	} else {
+		cout<<"\nGenerate a license is succeed.\n"<<endl;
 	}
-	cout<<"LIC: "<<lic.mac<<" - "<<lic.code<<endl;
+	return 0;
+#endif
 
-	get_mac();
 	if(read_proc_list() < 0) { return -1; }
 
-	cout<<"MAC: "<<my_mac<<endl;
-	create_network_procedure();
+	if(create_network_procedure() < 0) {
+		cout<<"create_network_procedure() error."<<endl;
+	}
+
+	state_machine();
 
 	return 0;
 }
+
+enum {
+	NONE=0, 
+	LICENSE_CHECK,
+	SERVICE_CHECK,
+};
+
+void state_machine()
+{
+	int state = LICENSE_CHECK;
+	int correct = 0;
+	cout<<"\n\n"<<endl;
+	while(1) {
+		sleep(3);
+		if(state == LICENSE_CHECK) {
+			struct license lic;
+			if(get_lic(lic) < 0) {
+				cout<<"Get a lisence is failed."<<endl;
+			} else {
+				cout<<"LIC: "<<lic.mac<<" - "<<lic.code<<" - "<<lic.info<<endl;
+				string mac = get_mac();
+				cout<<"MAC: "<<mac<<endl;
+				if(lic.mac == mac && lic.code == "valid") {
+					cout<<"A license is correct"<<endl;
+					state = SERVICE_CHECK;
+				} else {
+					cout<<"A license is incorrect."<<endl;
+				}
+			}
+		}
+		else if(state == SERVICE_CHECK) {
+			cout<<"Check Services...."<<endl;
+		}
+	}
+}
+
+
+
+

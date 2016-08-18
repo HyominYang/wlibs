@@ -1,9 +1,5 @@
 #include <iostream>
 #include <fstream>
-
-#include "defines.h"
-#include "msgtype.h"
-
 using namespace std;
 using std::ofstream;
 using std::ifstream;
@@ -151,6 +147,7 @@ void state_machine();
 extern int create_network_procedure();
 int main(int argc, char **argv)
 {
+#if 0
 #ifdef MAKE_LIC
 	if(make_lic() < 0) {
 		cout<<"\nGenerate a license is failed!. Need a 'license.dec'\n"<<endl;
@@ -161,6 +158,7 @@ int main(int argc, char **argv)
 #endif
 
 	if(read_proc_list() < 0) { return -1; }
+#endif
 
 	if(create_network_procedure() < 0) {
 		cout<<"create_network_procedure() error."<<endl;
@@ -183,27 +181,9 @@ void state_machine()
 	int correct = 0;
 	sleep(1);
 	cout<<"\n\n"<<endl;
+	cout<<"A Server is running..."<<endl;
 	while(1) {
 		sleep(3);
-		if(state == LICENSE_CHECK) {
-			struct license lic;
-			if(get_lic(lic) < 0) {
-				cout<<"Get a lisence is failed."<<endl;
-			} else {
-				cout<<"LIC: "<<lic.mac<<" - "<<lic.code<<" - "<<lic.info<<endl;
-				string mac = get_mac();
-				cout<<"MAC: "<<mac<<endl;
-				if(lic.mac == mac && lic.code == "valid") {
-					cout<<"A license is correct"<<endl;
-					state = SERVICE_CHECK;
-				} else {
-					cout<<"A license is incorrect."<<endl;
-				}
-			}
-		}
-		else if(state == SERVICE_CHECK) {
-			cout<<"Check Services...."<<endl;
-		}
 	}
 }
 

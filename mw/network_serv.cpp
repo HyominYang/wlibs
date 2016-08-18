@@ -4,11 +4,16 @@
 #include "defines.h"
 #include "msgtype.h"
 
-
+static int flag_run_table = 0;
 using namespace std;
 
 void message_parser(struct wsock *clnt, char *buff)
 {
+	msg_header_t *msg = (msg_header_t *) buff;
+
+	char *data = (char *) &msg[1];
+
+	cout<<data<<endl;
 }
 
 void *network_table(void *obj)
@@ -16,6 +21,7 @@ void *network_table(void *obj)
 	struct wsock_table *table = (struct wsock_table *) obj;
 
 	cout<<"execute network-table."<<endl;
+	flag_run_table = 1;
 	wsock_table_run(table);
 	cout<<"network-table is terminated."<<endl;
 
@@ -24,6 +30,11 @@ void *network_table(void *obj)
 }
 
 #if 1
+void f_conn (struct wsock_table *table, struct wsock *serv, struct wsock *clnt)
+{
+	printf("%s:%d is connected.\n", clnt->addr_info.ch_ip, clnt->addr_info.h_port);
+}
+
 void f_disconn (struct wsock_table *table, struct wsock *clnt)
 {
 	printf("%s:%d is disconnected.\n", clnt->addr_info.ch_ip, clnt->addr_info.h_port);
@@ -64,41 +75,18 @@ void *network_procedure(void *obj)
 	struct wsock_table *table = (struct wsock_table *) obj;
 	struct wsock *wsock;
 
-	char *buff = new char[255];
-	if(buff == NULL) {
-		cout<<"malloc is failed."<<endl;
+	if(wsock_add_new_tcp_server(table, (char *)"0.0.0.0", 48583, 5, 10, NULL,
+			f_conn,
+			f_recv,
+			f_disconn) < 0) {
+		printf("Error : wsock_add_new_tcp_server() is failed.\n");
 		exit(1);
 		return NULL;
 	}
 
-	msg_header_t *msg = (msg_header_t *) buff;
-	char *data = (char *) &msg[1];
 	while(1)
 	{
 		sleep(1);
-		if(table->element_count_current == 0) {
-			// connect to server
-			//cout<<"try connect to server."<<endl;
-#if 1
-			if((wsock = wsock_add_new_tcp_client(
-					table,
-					(char *) "127.0.0.1",
-					48583,
-					0,
-					5,
-					NULL,
-					&f_recv,
-					&f_disconn)) == NULL) {
-				printf("wsock_add_new_tcp_client() is failed.\n");
-				exit(1);
-				return NULL;
-			}
-#endif
-		}
-		msg->len = sizeof(msg_header_t);
-		strcpy(data, "Hello, world!");
-		msg->len += strlen(data) + 1;
-		wsock_send(wsock, msg, msg->len);
 	}
 
 	exit(1);
@@ -115,7 +103,7 @@ int create_network_procedure()
 		return -1;
 	}
 
-	if(wsock_create_tcp_table(table, 1, BUFF_MAX, 60) < 0) {
+	if(wsock_create_tcp_table(table, 11/*client cnt+1*/, BUFF_MAX, 60) < 0) {
 		cout<<"wsock_create_tcp_table() is failed."<<endl;
 		return -1;
 	}
@@ -124,6 +112,12 @@ int create_network_procedure()
 		cout<<"Create a thread is failed. (network_table)"<<endl;
 		return -1;
 	}
+
+	while(flag_run_table == 0) {
+		usleep(1000);
+	}
+	sleep(1);
+
 	if(pthread_create(&pid, NULL, network_procedure, (void *) table) != 0) {
 		cout<<"Create a thread is failed. (network_procedure)"<<endl;
 		return -1;

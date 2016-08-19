@@ -354,7 +354,7 @@ struct wsock *wsock_add_new_tcp_client(
 	int sock, tmp;
 	struct epoll_event ep_event;
 	struct wsock *lp_wsock;
-	char *str_local_ip_v4="127.0.0.1";
+	char *str_local_ip_v4 = (char *) "127.0.0.1";
 	struct wsock_addr serv_info;
 	struct wsock_addr clnt_info;
 	char str_error[256];

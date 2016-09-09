@@ -1,5 +1,12 @@
 #include <iostream>
 #include <fstream>
+
+#include <confr.h>
+
+#include "defines.h"
+#include "msgtype.h"
+#include "state.h"
+
 using namespace std;
 using std::ofstream;
 using std::ifstream;
@@ -147,7 +154,6 @@ void state_machine();
 extern int create_network_procedure();
 int main(int argc, char **argv)
 {
-#if 0
 #ifdef MAKE_LIC
 	if(make_lic() < 0) {
 		cout<<"\nGenerate a license is failed!. Need a 'license.dec'\n"<<endl;
@@ -158,7 +164,6 @@ int main(int argc, char **argv)
 #endif
 
 	if(read_proc_list() < 0) { return -1; }
-#endif
 
 	if(create_network_procedure() < 0) {
 		cout<<"create_network_procedure() error."<<endl;
@@ -169,13 +174,87 @@ int main(int argc, char **argv)
 	return 0;
 }
 
+
+int g_connected = 0;
+int g_state = NONE;
+WConf g_conf, g_ver;
+
+#define CONF_FILEPATH "./test.conf"
+#define VER_FILEPATH "/home/wind/.kds_ver"
 void state_machine()
 {
+	struct tm t;
+	time_t curr_time;
+	int bak_day = 0;
+
+	int correct = 0;
 	sleep(1);
 	cout<<"\n\n"<<endl;
-	cout<<"A Server is running..."<<endl;
 	while(1) {
 		sleep(3);
+#if 0
+		struct tm {
+			int tm_sec;         /* seconds */
+			int tm_min;         /* minutes */
+			int tm_hour;        /* hours */
+			int tm_mday;        /* day of the month */
+			int tm_mon;         /* month */
+			int tm_year;        /* year */
+			int tm_wday;        /* day of the week */
+			int tm_yday;        /* day in the year */
+			int tm_isdst;       /* daylight saving time */
+		};
+#endif
+		// GET CURRENT DATETIME
+		curr_time = time(0);
+		localtime_r(&curr_time, &t);
+		if(bak_day != t.tm_yday) {
+			cout<<"DATE: "<<t.tm_year+1900<<"-"<<t.tm_mon+1<<"-"<<t.tm_mday<<endl;
+			bak_day = t.tm_yday;
+			g_state = NONE; // init state
+		}
+		// --- end GET CURRENT DATETIME
+
+		if(g_state == NONE) {
+			g_state = LOAD_CONF;
+		}
+		else if(g_state == LOAD_CONF) {
+			if(g_conf.read(CONF_FILEPATH) == true) {
+				if(g_conf["client"] == "lotteria") {
+					g_state = VERSION_CHECK;
+				} else {
+					g_state = LICENSE_CHECK;
+				}
+			}
+		}
+		else if(g_state == LICENSE_CHECK) {
+			struct license lic;
+			if(get_lic(lic) < 0) {
+				cout<<"Get a lisence is failed."<<endl;
+			} else {
+				cout<<"LIC: "<<lic.mac<<" - "<<lic.code<<" - "<<lic.info<<endl;
+				string mac = get_mac();
+				cout<<"MAC: "<<mac<<endl;
+				if(lic.mac == mac && lic.code == "valid") {
+					cout<<"A license is correct"<<endl;
+					g_state = VERSION_CHECK;
+				} else {
+					cout<<"A license is incorrect."<<endl;
+					g_state = LICENSE_GET;
+				}
+			}
+		}
+		else if(g_state == VERSION_CHECK) {
+			if(g_ver.read(VER_FILEPATH) == true) {
+				cout<<"KDS version: "<<g_ver["version"]<<endl;
+			} else {
+				cout<<"Check version is failed."<<endl;
+			}
+			g_state = VERSION_CHECK_GET;
+		}
+		else if(g_state == SERVICE_CHECK) {
+			cout<<"Check Services...."<<endl;
+		}
 	}
 }
 

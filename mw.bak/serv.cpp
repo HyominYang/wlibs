@@ -169,8 +169,16 @@ int main(int argc, char **argv)
 	return 0;
 }
 
+enum {
+	NONE=0, 
+	LICENSE_CHECK,
+	SERVICE_CHECK,
+};
+
 void state_machine()
 {
+	int state = LICENSE_CHECK;
+	int correct = 0;
 	sleep(1);
 	cout<<"\n\n"<<endl;
 	cout<<"A Server is running..."<<endl;

@@ -8,7 +8,6 @@
 
 static int flag_run_table = 0;
 using namespace std;
-msg_t *res_msg = NULL;
 
 void message_parser(struct wsock *clnt, char *buff)
 {
@@ -17,52 +16,19 @@ void message_parser(struct wsock *clnt, char *buff)
 
 	char *data = (char *) &msg_h[1];
 
-	if(res_msg == NULL) {
-		res_msg = (msg_t *) new char [BUFF_MAX];
-		if(res_msg == NULL) {
-			cout<<"(res_msg buffer) malloc() is failed."<<endl;
-			return;
-		}
-	}
-
 	//cout<<data<<endl;
-	if(msg->command == REQ_DOWNLOAD) {
-		cout<<"["<<clnt->addr_info.ch_ip<<":"
-				 <<clnt->addr_info.h_port<<"]REQ_DOWNLOAD"<<endl;
-		WConf conf;
+	if(msg->command == REQ_GET_VERSION) {
+		WConf ver;
 
-		res_msg->command = RES_DOWNLOAD;
-		res_msg->len = 12;
-		res_msg->data_len = 0;
-		do {
-			if(conf.read(SERVER_CONF_FILEPATH) == false) {
-				cout<<"failed: read a conf file."<<endl;
-				break;
-			} else {
-				int ver = atoi(conf["version"].data());
-				if(msg->d.number >= ver) {
-					cout<<"version is enough"<<endl;
-					break;
-				}
-			}
-			string filepath = conf["upload_filepath"] + "/" + conf["upload_filename"];
-			int fd = open(filepath.data(), O_RDONLY);
-			if(fd < 0) {
-				cout<<"A update-file open error."<<endl;
-				break;
-			}
-			int read_len = read(fd, res_msg->d.data, BUFF_MAX);
-			close(fd);
-			if(read_len <= 0) {
-				break;
-			}
-			res_msg->data_len = read_len;
-			res_msg->len += read_len;
-		} while(0);
-		if(wsock_send(clnt, (char *) res_msg, res_msg->len) < 0) {
-			cout<<"Send a message is failed.: RES_DOWNLOAD"<<endl;
+		msg_t res_msg;
+		memset(&res_msg, 0, sizeof(res_msg));
+		res_msg.command = RES_GET_VERSION;
+
+		string ver_filepath = "./s_ver";
+		if(ver.read(ver_filepath) == false) {
+			res_msg.d.number = 0;
 		} else {
-			cout<<"RES_DOWNLOAD ("<<res_msg->len<<" bytes)"<<endl;
+			res_msg.d.number = atoi(ver["version"].data());
 		}
 	}
 }

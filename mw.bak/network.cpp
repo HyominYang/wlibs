@@ -9,9 +9,7 @@
 
 extern int g_connected;
 extern int g_state;
-extern WConf g_conf;
-
-extern void pstate(int state);
+extern WConf g_conf, g_ver;
 
 using namespace std;
 
@@ -20,21 +18,11 @@ void message_parser(struct wsock *clnt, char *buff)
 	msg_t *msg = (msg_t *) buff;
 
 	switch(msg->command) {
-		case RES_DOWNLOAD:
-		if(msg->data_len == 0) {
-			pstate(SM_CHECK_BIN);
-		} else {
-			string filepath = g_conf["download_filepath"] + "/" + g_conf["download_filename"];
-			int fd = open(filepath.data(), O_WRONLY|O_TRUNC|O_CREAT);
-			if(fd < 0) {
-				cout<<"Open error!!!"<<endl;
-				pstate(SM_CHECK_BIN);
-			} else {
-				write(fd, msg->d.data, msg->data_len);
-				sync();
-				close(fd);
-				pstate(SM_UPGRADE);
-			}
+		case RES_GET_VERSION:
+		int ver = msg->d.number;
+		int curr_ver = atoi(g_ver["version"].data());
+		if(curr_ver > ver) {
+			cout<<"current version: "<<curr_ver<<", new version: "<<ver<<endl;
 		}
 		break;
 	}
@@ -57,7 +45,6 @@ void f_disconn (struct wsock_table *table, struct wsock *clnt)
 {
 	g_connected = 0;
 	printf("%s:%d is disconnected.\n", clnt->addr_info.ch_ip, clnt->addr_info.h_port);
-	g_state = SM_CHECK_BIN;
 }
 
 void f_recv (struct wsock_table *table, struct wsock *clnt, unsigned char *buff, int read_len, int *offset)
@@ -131,17 +118,28 @@ void *network_procedure(void *obj)
 			}
 #endif
 		} else if(g_connected == 1) {
-#define msg_init() memset(msg, 0, sizeof(msg_t))
-#define msg_calc() msg->len = 12 + msg->data_len
-#define msg_send() wsock_send(wsock, msg, msg->len)
-			if(g_state == SM_WAIT) {
-				msg_init();
-				msg->d.number = atoi(g_conf["version"].data());
-				msg->data_len = 4;
-				msg->command = REQ_DOWNLOAD;
-				msg_calc();
-				msg_send();
-				pstate(SM_DOWNLOAD);
+			switch(g_state) {
+				case LICENSE_GET:
+				//INIT_MSG();
+				//msg->command = REQ_GET_LICENSE;
+				//CALC_MSG_LEN();
+				//wsock_send(wsock, msg, msg->len);
+				break;
+				case VERSION_CHECK_GET:
+					INIT_MSG();
+					msg->command = REQ_GET_VERSION;
+					msg->len = sizeof(msg_header_t);
+				break;
+				case VERSION_CHECK_WAIT:
+				break;
+			}
+		} else if(g_connected == 0) {
+			switch(g_state) {
+				case VERSION_CHECK_GET:
+				case VERSION_CHECK_WAIT:
+					g_state = SERVICE_CHECK;
+					cout<<"Server is not connection."<<endl;
+				break;
 			}
 		}
 #if 0 // TEST_CODE

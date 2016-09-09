@@ -1,9 +1,25 @@
 #include <iostream>
 #include <fstream>
 
+#include <confr.h>
+
 #include "defines.h"
 #include "msgtype.h"
+#include "state.h"
 
+#if 0
+		struct tm {
+			int tm_sec;         /* seconds */
+			int tm_min;         /* minutes */
+			int tm_hour;        /* hours */
+			int tm_mday;        /* day of the month */
+			int tm_mon;         /* month */
+			int tm_year;        /* year */
+			int tm_wday;        /* day of the week */
+			int tm_yday;        /* day in the year */
+			int tm_isdst;       /* daylight saving time */
+		};
+#endif
 using namespace std;
 using std::ofstream;
 using std::ifstream;
@@ -171,40 +187,69 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-enum {
-	NONE=0, 
-	LICENSE_CHECK,
-	SERVICE_CHECK,
-};
+
+int g_connected = 0;
+int g_state = SM_NONE;
+WConf g_conf;
+
+void pstate(int state)
+{
+	static const char *str_state[SM_MAX] = {
+		"SM_NONE",
+		"SM_GET_CONF",
+		"SM_WAIT",
+		"SM_DOWNLOAD",
+		"SM_UPGRADE",
+		"SM_CHECK_BIN"
+	};
+	string str_b = str_state[g_state];
+	string str_a = str_state[state];
+	g_state = state;
+	cout<<"STATE: "<<str_b<<" -> "<<str_a<<endl;
+}
 
 void state_machine()
 {
-	int state = LICENSE_CHECK;
+	static int s_tick=0;
+	struct tm t;
+	time_t curr_time;
+	int bak_day = 0;
+
 	int correct = 0;
 	sleep(1);
 	cout<<"\n\n"<<endl;
 	while(1) {
 		sleep(3);
-		if(state == LICENSE_CHECK) {
-			struct license lic;
-			if(get_lic(lic) < 0) {
-				cout<<"Get a lisence is failed."<<endl;
-			} else {
-				cout<<"LIC: "<<lic.mac<<" - "<<lic.code<<" - "<<lic.info<<endl;
-				string mac = get_mac();
-				cout<<"MAC: "<<mac<<endl;
-				if(lic.mac == mac && lic.code == "valid") {
-					cout<<"A license is correct"<<endl;
-					state = SERVICE_CHECK;
-				} else {
-					cout<<"A license is incorrect."<<endl;
-				}
+		// GET CURRENT DATETIME
+		curr_time = time(0);
+		localtime_r(&curr_time, &t);
+		if(bak_day != t.tm_yday) {
+			cout<<"DATE: "<<t.tm_year+1900<<"-"<<t.tm_mon+1<<"-"<<t.tm_mday<<endl;
+			bak_day = t.tm_yday;
+			g_state = SM_NONE; // init state
+		}
+		// --- end GET CURRENT DATETIME
+
+		if(g_state == SM_NONE) {
+			pstate(SM_GET_CONF);
+		}
+		if(g_state == SM_GET_CONF) {
+			g_conf.read(CLIENT_CONF_FILEPATH);
+			pstate(SM_WAIT);
+		}
+		if(g_state == SM_WAIT) {
+			s_tick++;
+			if(10 <= s_tick) {
+				pstate(SM_CHECK_BIN);
 			}
 		}
-		else if(state == SERVICE_CHECK) {
-			cout<<"Check Services...."<<endl;
+		if(g_state == SM_UPGRADE) {
+			pstate(SM_CHECK_BIN);
+		}
+		if(g_state == SM_CHECK_BIN) {
 		}
 	}
+	return;
 }
 
 

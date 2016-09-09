@@ -22,6 +22,7 @@ bool WConf::read(string filepath)
 
 	int offset=0;
 
+	m_filepath = filepath;
 	while(!m_rd.eof())
 	{
 		string line;
@@ -45,6 +46,27 @@ bool WConf::read(string filepath)
 	return true;
 }
 
+#include <time.h>
+#include <stdio.h>
+
+bool WConf::backup()
+{
+	time_t now = time(0);
+	struct tm t;
+	char buff[50];
+
+	localtime_r(&now, &t);
+	snprintf(buff, 50, ".%d%d%d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
+
+	string new_filepath = m_filepath + buff;
+
+	ifstream srce(m_filepath.data(), std::ios::binary);
+	ofstream dest(new_filepath.data(), std::ios::binary);
+	dest << srce.rdbuf();
+
+	return true;
+}
+
 string & WConf::operator [] (string name)
 {
 	for(int i=0; i<m_index_max; i++) {
@@ -61,11 +83,16 @@ int main(int argc, char **argv)
 {
 	WConf conf;
 
-	conf.read("test.conf");
+	if(conf.read("test.conf") == false) {
+		cout<<"file open error!!"<<endl;
+		return -1;
+	}
 
 	cout<<conf["test"]<<endl;
 	cout<<conf["value"]<<endl;
 	cout<<conf["siibal"]<<endl;
+
+	conf.backup();
 
 	return 0;
 }

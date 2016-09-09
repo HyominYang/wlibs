@@ -4,7 +4,6 @@ struct msg_header
 {
 	int len;
 	int command;
-	int data_len;
 }__attribute__((packed));
 typedef struct msg_header msg_header_t;
 
@@ -32,8 +31,6 @@ typedef struct msg_s msg_t;
 
 enum {
 	REQ_GET_LICENCE=0,
-	REQ_DOWNLOAD,
-	RES_DOWNLOAD,
 
 	REQ_GET_VERSION,
 	RES_GET_VERSION,
